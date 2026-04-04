@@ -1,0 +1,26 @@
+@import "tailwindcss";
+
+/* Dark base */
+:root {
+  color-scheme: dark;
+}
+
+body {
+  background-color: #18181b; /* zinc-900 */
+  color: #f4f4f5;
+  font-family: system-ui, -apple-system, sans-serif;
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #27272a;
+}
+::-webkit-scrollbar-thumb {
+  background: #52525b;
+  border-radius: 3px;
+}

@@ -1,0 +1,43 @@
+# ── Environment ───────────────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ── Claude Code (contains local usernames and allowed command history) ────────
+.claude/
+
+# ── Python backend ────────────────────────────────────────────────────────────
+backend/.venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/**/*.pyc
+backend/**/*.pyo
+backend/*.egg-info/
+
+# ── Backend data (database, uploads, logs) ────────────────────────────────────
+backend/data/
+backend/uvicorn.log
+
+# ── Node / frontend ───────────────────────────────────────────────────────────
+frontend/node_modules/
+frontend/dist/
+
+# ── Rust / Tauri build artifacts ──────────────────────────────────────────────
+frontend/src-tauri/target/
+
+# ── Backups ───────────────────────────────────────────────────────────────────
+backups/
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log

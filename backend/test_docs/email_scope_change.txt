@@ -1,0 +1,36 @@
+From: david.chen@client.com
+To: sarah.pm@company.com
+Subject: RE: Project Alpha - Additional Requirements
+Date: Wed, 1 Apr 2026 14:32:00 +0000
+
+Hi Sarah,
+
+Following our call yesterday, I wanted to confirm in writing the additional requirements
+the business has asked us to include in the Alpha release.
+
+**New Requirements (Change Request CR-004):**
+
+1. **Export to CSV** — Users must be able to export any data table to CSV format.
+   This was not in the original scope but is now a hard requirement for the finance team.
+
+2. **Audit Log** — Every data modification must be logged with user ID, timestamp,
+   and before/after values. Required for compliance with our internal data governance policy.
+
+3. **Role-based access control (RBAC)** — At minimum, two roles: Admin and Read-Only.
+   Originally scoped for Phase 2 but legal have moved this to a Phase 1 blocker.
+
+**Impact on Timeline:**
+
+Our internal estimate is these three items add approximately 3 weeks of development work.
+Given the current Alpha deadline of April 20th, we may need to discuss either:
+  a) Extending the deadline to May 12th, or
+  b) Descoping something else to accommodate
+
+Please can you review with the team and come back to me by end of week with a proposal?
+
+The business has approved budget for the extra work — this is not a negotiation on cost,
+purely a scheduling question.
+
+Best regards,
+David Chen
+Head of Digital Transformation
