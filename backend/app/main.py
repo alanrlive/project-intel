@@ -43,12 +43,14 @@ app.add_middleware(
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 from app.routers import data, documents, llm, notifications, query  # noqa: E402
+from app.routers import settings as settings_router  # noqa: E402
 
 app.include_router(llm.router)
 app.include_router(documents.router)
 app.include_router(notifications.router)
 app.include_router(query.router)
 app.include_router(data.router)
+app.include_router(settings_router.router)
 
 
 # ── Health & status endpoints ─────────────────────────────────────────────────

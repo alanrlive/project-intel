@@ -1,10 +1,13 @@
 import type {
   Action,
+  BatchUploadResult,
   Deadline,
   Dependency,
   Document,
+  DocumentType,
   LlmStatus,
   NotificationsResponse,
+  OllamaTestResult,
   QueryResponse,
   Risk,
   ScopeItem,
@@ -19,6 +22,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail?.detail ?? `HTTP ${res.status}`);
   }
+  if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
 
@@ -168,4 +172,46 @@ export const api = {
 
   deleteScopeItem: (id: number) =>
     request<{ deleted: number }>(`/scope-items/${id}`, { method: "DELETE" }),
+
+  // ── Settings — Document Types ─────────────────────────────────────────────
+  listDocumentTypes: () =>
+    request<DocumentType[]>("/settings/document-types"),
+
+  createDocumentType: (data: { name: string; extraction_prompt: string; target_model: string }) =>
+    request<DocumentType>("/settings/document-types", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }),
+
+  updateDocumentType: (
+    id: number,
+    data: { name?: string; extraction_prompt?: string; target_model?: string },
+  ) =>
+    request<DocumentType>(`/settings/document-types/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }),
+
+  deleteDocumentType: (id: number) =>
+    request<void>(`/settings/document-types/${id}`, { method: "DELETE" }),
+
+  // ── Batch upload ──────────────────────────────────────────────────────────
+  uploadBatch: (files: File[], typeIds: number[]): Promise<BatchUploadResult[]> => {
+    const form = new FormData();
+    files.forEach((f) => form.append("files", f));
+    typeIds.forEach((id) => form.append("type_ids", String(id)));
+    return request<BatchUploadResult[]>("/documents/batch-upload", {
+      method: "POST",
+      body: form,
+    });
+  },
+
+  // ── Settings — Ollama ─────────────────────────────────────────────────────
+  listOllamaModels: () =>
+    request<{ models: string[] }>("/settings/ollama/models"),
+
+  testOllamaConnection: () =>
+    request<OllamaTestResult>("/settings/ollama/test", { method: "POST" }),
 };

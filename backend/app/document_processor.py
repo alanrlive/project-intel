@@ -10,11 +10,15 @@ from docx import Document as DocxDocument
 from sqlalchemy.orm import Session
 
 from app.llm_service import OllamaService
-from app.models import Action, Deadline, Dependency, Document, Risk, ScopeItem
+from app.models import Action, Deadline, Dependency, Document, DocumentType, Risk, ScopeItem
 
 logger = logging.getLogger(__name__)
 
-# ── Extraction prompt ─────────────────────────────────────────────────────────
+# ── Legacy extraction prompt (fallback only) ──────────────────────────────────
+# Used by: run_llm_extraction() → process_document() → POST /documents/upload
+# New uploads should use extract_with_type() which reads the prompt from the
+# DocumentType table.  This constant is kept so the old single-file endpoint
+# keeps working without a document_type_id.
 
 EXTRACTION_PROMPT = """Analyze this {doc_type} document and extract structured information.
 
@@ -113,6 +117,60 @@ def _extract_eml(file_path: Path) -> str:
     return "\n".join(parts)
 
 
+def _excel_to_markdown(file_path: Path) -> str:
+    """
+    Convert the first sheet of an Excel workbook to a Markdown table.
+    Ignores formatting/colours/formulas — values only.
+    Merged cells are handled by openpyxl's min_row iteration (merged value
+    appears on the top-left cell; others are None → shown as empty).
+    """
+    try:
+        import openpyxl
+    except ImportError:
+        raise RuntimeError("openpyxl is not installed. Run: pip install openpyxl")
+
+    wb = openpyxl.load_workbook(file_path, data_only=True)
+    ws = wb.active  # first sheet
+
+    rows = []
+    for row in ws.iter_rows(values_only=True):
+        # Skip fully empty rows
+        if all(cell is None or str(cell).strip() == "" for cell in row):
+            continue
+        rows.append([str(cell) if cell is not None else "" for cell in row])
+
+    if not rows:
+        return ""
+
+    # Use first non-empty row as header
+    header = rows[0]
+    data_rows = rows[1:]
+
+    # Determine column widths for padding
+    col_widths = [max(len(h), 3) for h in header]
+    for row in data_rows:
+        for i, cell in enumerate(row):
+            if i < len(col_widths):
+                col_widths[i] = max(col_widths[i], len(cell))
+
+    def fmt_row(cells: list[str]) -> str:
+        padded = [
+            cells[i].ljust(col_widths[i]) if i < len(col_widths) else cells[i]
+            for i in range(len(col_widths))
+        ]
+        return "| " + " | ".join(padded) + " |"
+
+    separator = "| " + " | ".join("-" * w for w in col_widths) + " |"
+
+    lines = [fmt_row(header), separator]
+    for row in data_rows:
+        # Pad short rows with empty strings
+        padded = row + [""] * (len(col_widths) - len(row))
+        lines.append(fmt_row(padded))
+
+    return "\n".join(lines)
+
+
 def extract_text(file_path: Path) -> str:
     """Dispatch to the correct extractor based on file suffix."""
     suffix = file_path.suffix.lower()
@@ -124,6 +182,8 @@ def extract_text(file_path: Path) -> str:
         return file_path.read_text(encoding="utf-8", errors="replace")
     if suffix in {".eml", ".msg"}:
         return _extract_eml(file_path)
+    if suffix in {".xlsx", ".xls"}:
+        return _excel_to_markdown(file_path)
     # Attempt plain text for unknown types
     logger.warning("Unknown file type %s — attempting plain text read", suffix)
     return file_path.read_text(encoding="utf-8", errors="replace")
@@ -141,6 +201,71 @@ async def run_llm_extraction(content: str, doc_type: str, llm: OllamaService) ->
 
     prompt = EXTRACTION_PROMPT.format(doc_type=doc_type, content=content)
     return await llm.extract(prompt)
+
+
+# ── Type-aware extraction ─────────────────────────────────────────────────────
+
+async def extract_with_type(
+    file_path: Path,
+    document_type_id: int,
+    db: Session,
+    llm: OllamaService,
+) -> dict:
+    """
+    Extract content using the prompt + model from a DocumentType record.
+    Returns the parsed extraction dict (same shape as run_llm_extraction).
+    """
+    doc_type: DocumentType | None = db.query(DocumentType).filter(
+        DocumentType.id == document_type_id
+    ).first()
+
+    if doc_type is None:
+        # Fall back to the built-in General prompt
+        logger.warning("DocumentType id=%d not found — using built-in extraction", document_type_id)
+        content = extract_text(file_path)
+        return await run_llm_extraction(content, "General", llm)
+
+    content = extract_text(file_path)
+    if not content.strip():
+        return {}
+
+    # Truncate to avoid overwhelming Ollama context window
+    max_chars = 12_000
+    if len(content) > max_chars:
+        logger.warning(
+            "Document truncated from %d to %d chars for type '%s'",
+            len(content), max_chars, doc_type.name,
+        )
+        content = content[:max_chars] + "\n\n[... document truncated ...]"
+
+    prompt = f"{doc_type.extraction_prompt}\n\nDocument content:\n{content}"
+
+    # Use the model specified on the DocumentType; fall back to Ollama's own fallback
+    available = await llm.list_model_names()
+    model = doc_type.target_model
+
+    # Normalise: accept short name like "mistral-nemo" matching "mistral-nemo:latest"
+    if model not in available:
+        for avail in available:
+            if avail.startswith(model):
+                model = avail
+                break
+        else:
+            logger.warning(
+                "Model '%s' not available for type '%s' — using extraction fallback",
+                doc_type.target_model, doc_type.name,
+            )
+            model = None  # let llm.extract() pick the best available
+
+    if model:
+        raw = await llm.generate(model=model, prompt=prompt, format="json", temperature=0.3)
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError as exc:
+            logger.error("LLM returned invalid JSON for type '%s': %s", doc_type.name, raw[:300])
+            raise ValueError(f"LLM returned malformed JSON: {exc}") from exc
+    else:
+        return await run_llm_extraction(content, doc_type.name, llm)
 
 
 # ── Date validation ───────────────────────────────────────────────────────────

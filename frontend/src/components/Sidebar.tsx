@@ -1,4 +1,4 @@
-import { Bell, Bot, CheckSquare, FileUp, Shield, Triangle, Link2, Layers } from "lucide-react";
+import { Bell, Bot, CheckSquare, FileUp, Shield, Triangle, Link2, Layers, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type View =
@@ -9,7 +9,8 @@ export type View =
   | "risks"
   | "deadlines"
   | "dependencies"
-  | "scope";
+  | "scope"
+  | "settings";
 
 interface NavItem {
   id: View;
@@ -18,14 +19,18 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { id: "notifications", label: "Briefing", icon: <Bell size={16} /> },
-  { id: "upload",        label: "Upload",   icon: <FileUp size={16} /> },
-  { id: "chat",          label: "Ask AI",   icon: <Bot size={16} /> },
-  { id: "actions",       label: "Actions",  icon: <CheckSquare size={16} /> },
-  { id: "risks",         label: "Risks",    icon: <Shield size={16} /> },
-  { id: "deadlines",     label: "Deadlines",icon: <Triangle size={16} /> },
-  { id: "dependencies",  label: "Depends",  icon: <Link2 size={16} /> },
-  { id: "scope",         label: "Scope",    icon: <Layers size={16} /> },
+  { id: "notifications", label: "Briefing",  icon: <Bell size={16} /> },
+  { id: "upload",        label: "Upload",    icon: <FileUp size={16} /> },
+  { id: "chat",          label: "Ask AI",    icon: <Bot size={16} /> },
+  { id: "actions",       label: "Actions",   icon: <CheckSquare size={16} /> },
+  { id: "risks",         label: "Risks",     icon: <Shield size={16} /> },
+  { id: "deadlines",     label: "Deadlines", icon: <Triangle size={16} /> },
+  { id: "dependencies",  label: "Depends",   icon: <Link2 size={16} /> },
+  { id: "scope",         label: "Scope",     icon: <Layers size={16} /> },
+];
+
+const BOTTOM_ITEMS: NavItem[] = [
+  { id: "settings", label: "Settings", icon: <Settings size={16} /> },
 ];
 
 interface SidebarProps {
@@ -45,7 +50,7 @@ export function Sidebar({ current, onChange, unreadCount, ollamaOk }: SidebarPro
         </span>
       </div>
 
-      {/* Nav */}
+      {/* Main nav */}
       <nav className="flex-1 space-y-0.5 px-2">
         {NAV_ITEMS.map((item) => (
           <button
@@ -68,6 +73,25 @@ export function Sidebar({ current, onChange, unreadCount, ollamaOk }: SidebarPro
           </button>
         ))}
       </nav>
+
+      {/* Bottom nav (Settings) */}
+      <div className="px-2 pb-1 border-t border-zinc-700 pt-2 space-y-0.5">
+        {BOTTOM_ITEMS.map((item) => (
+          <button
+            key={item.id}
+            onClick={() => onChange(item.id)}
+            className={cn(
+              "w-full flex items-center gap-2.5 px-3 py-2 rounded text-sm transition-colors cursor-pointer",
+              current === item.id
+                ? "bg-zinc-700 text-white"
+                : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+            )}
+          >
+            {item.icon}
+            <span>{item.label}</span>
+          </button>
+        ))}
+      </div>
 
       {/* Ollama status dot */}
       <div className="px-4 mt-4 flex items-center gap-2 text-xs text-zinc-500">

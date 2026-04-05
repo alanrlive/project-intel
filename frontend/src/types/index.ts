@@ -102,6 +102,37 @@ export interface QueryResponse {
   answered_directly: boolean;
 }
 
+export interface BatchUploadResult {
+  filename: string;
+  success: boolean;
+  doc_id?: number;
+  extracted?: {
+    actions: number;
+    risks: number;
+    deadlines: number;
+    dependencies: number;
+    scope_items: number;
+  };
+  warning?: string;
+  error?: string;
+}
+
+export interface DocumentType {
+  id: number;
+  name: string;
+  extraction_prompt: string;
+  target_model: string;
+  is_system: boolean;
+}
+
+export interface OllamaTestResult {
+  connected: boolean;
+  ollama_url: string;
+  model_count?: number;
+  models?: string[];
+  error?: string;
+}
+
 export interface LlmStatus {
   ollama_running: boolean;
   ollama_url: string;

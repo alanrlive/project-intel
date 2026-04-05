@@ -8,16 +8,31 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 
+class DocumentType(Base):
+    __tablename__ = "document_types"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    extraction_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    target_model: Mapped[str] = mapped_column(String, default="mistral-nemo")
+    is_system: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    documents: Mapped[list["Document"]] = relationship("Document", back_populates="document_type")
+
+
 class Document(Base):
     __tablename__ = "documents"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     filename: Mapped[str] = mapped_column(String, nullable=False)
     upload_date: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    doc_type: Mapped[str | None] = mapped_column(String)  # meeting_notes|email|plan|raid|other
+    doc_type: Mapped[str | None] = mapped_column(String)  # legacy free-text field
+    document_type_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("document_types.id"))
     content_text: Mapped[str | None] = mapped_column(Text)
     file_path: Mapped[str | None] = mapped_column(String)
 
+    document_type: Mapped["DocumentType | None"] = relationship("DocumentType", back_populates="documents")
     actions: Mapped[list["Action"]] = relationship("Action", back_populates="source_doc")
     deadlines: Mapped[list["Deadline"]] = relationship("Deadline", back_populates="source_doc")
 

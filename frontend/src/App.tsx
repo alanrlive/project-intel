@@ -8,6 +8,7 @@ import { RisksTable } from "@/components/RisksTable";
 import { DeadlinesTable } from "@/components/DeadlinesTable";
 import { DependenciesTable } from "@/components/DependenciesTable";
 import { ScopeTable } from "@/components/ScopeTable";
+import { SettingsPage } from "@/components/SettingsPage";
 import { api } from "@/lib/api";
 import { ToastContainer } from "@/components/ui/toast";
 import "./index.css";
@@ -61,13 +62,14 @@ export default function App() {
           {view === "notifications" && (
             <NotificationPanel onAllRead={handleNotificationsRead} />
           )}
-          {view === "upload" && <UploadPanel />}
+          {view === "upload" && <UploadPanel onNavigate={setView} />}
           {view === "chat" && <ChatInterface ollamaOk={ollamaOk} />}
           {view === "actions" && <ActionsTable />}
           {view === "risks" && <RisksTable />}
           {view === "deadlines" && <DeadlinesTable />}
           {view === "dependencies" && <DependenciesTable />}
           {view === "scope" && <ScopeTable />}
+          {view === "settings" && <SettingsPage />}
         </div>
       </main>
       <ToastContainer />

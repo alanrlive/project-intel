@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "@/components/ui/toast";
 import { formatDate } from "@/lib/utils";
+import { Pagination, PAGE_SIZE } from "@/components/ui/pagination";
 
 const SOURCE_BADGE: Record<string, "info" | "warning" | "outline"> = {
   original_plan:  "outline",
@@ -17,6 +18,7 @@ const SOURCE_BADGE: Record<string, "info" | "warning" | "outline"> = {
 export function ScopeTable() {
   const [items, setItems] = useState<ScopeItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(0);
   const [approvedFilter, setApprovedFilter] = useState<"" | "true" | "false">("");
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({
@@ -34,7 +36,7 @@ export function ScopeTable() {
     finally { setLoading(false); }
   };
 
-  useEffect(() => { load(); }, [approvedFilter]);
+  useEffect(() => { load(); setPage(0); }, [approvedFilter]);
 
   const toggleApproved = async (id: number, approved: boolean) => {
     try {
@@ -126,7 +128,7 @@ export function ScopeTable() {
         <p className="text-sm text-zinc-500">No scope items found.</p>
       ) : (
         <div className="space-y-2">
-          {items.map((s) => (
+          {items.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map((s) => (
             <Card key={s.id}>
               <CardContent className="py-3 space-y-2">
                 <div className="flex items-start justify-between gap-3">
@@ -164,6 +166,7 @@ export function ScopeTable() {
               </CardContent>
             </Card>
           ))}
+          <Pagination total={items.length} page={page} onPage={setPage} />
         </div>
       )}
     </div>

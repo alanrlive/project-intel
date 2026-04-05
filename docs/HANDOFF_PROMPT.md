@@ -90,14 +90,17 @@ pm_tool/
 
 ## Recent Changes Just Made
 
-### Pagination Added to Data Tables
-Claude Code was just asked to add pagination (50 items per page) to:
+### Pagination Added to All Data Tables
+Pagination (50 items per page) is now implemented in **all 5 data tables**:
 - Actions table
 - Risks table
 - Deadlines table
 - Dependencies table
+- Scope Items table
 
 **Reason:** App works great now with 2-10 items, but will slow down significantly after 500+ items per table. Pagination ensures it scales to handle a year-long project with daily uploads (~1,250 actions, ~750 risks after 12 months).
+
+**Implementation:** Client-side pagination via shared `Pagination` component (`frontend/src/components/ui/pagination.tsx`). Backend still returns full datasets — server-side `limit`/`offset` is a future optimization.
 
 ## Known Limitations (Pre-Pagination)
 
@@ -202,18 +205,41 @@ cd C:\repos\pm_tool
 
 ## What I Need Help With
 
-### Primary Request
-Verify pagination was implemented correctly in the frontend. Specifically:
-1. Check `frontend/src/components/` for updated table components
-2. Confirm pagination controls added to Actions, Risks, Deadlines, Dependencies tables
-3. Ensure backend API calls support pagination parameters (offset, limit)
-4. Review if database queries need indexes for performance
+### Completed in Batch Upload Session
+- `POST /documents/batch-upload` endpoint (sequential, per-file success/error)
+- Excel support: `.xlsx` → markdown table via openpyxl (first sheet, values only)
+- `extract_with_type()` — loads prompt + model from DocumentType DB row
+- `EXTRACTION_PROMPT` kept as legacy fallback for old single-file endpoint only
+- Frontend batch upload: `uploadBatch()`, `BatchUploadResult` type, UploadPanel wired to real API
+- Drag-and-drop fixed: added `onDragEnter`, stable `useCallback` handlers, child-element flicker fix via `relatedTarget` check
+- `tests/create_test_data.py` — generates raid_example.xlsx, meeting_notes.docx, budget_overview.pdf
+- `tests/test_batch_upload.py` — 8 integration test suites, stdlib only, no pytest required
+- `docs/BATCH_UPLOAD.md` — full feature documentation
+- `README.md` — written from scratch with full project overview
+- `scripts/status.ps1` — adds document_types count (system vs custom) and last-24h upload count
 
-### Secondary Requests (Future)
-1. **Add date range filters** (Last 30/90/365 days) to complement pagination
-2. **Archive old completed items** (auto-archive tasks completed >6 months ago)
-3. **Optimize notification generation** (currently scans all items every time)
-4. **Add vector search for chat** (better context retrieval for Q&A)
+### Completed in Earlier Sessions
+- Pagination added to DependenciesTable and ScopeTable (was missing from these two)
+- All 5 data tables now have consistent 50-items/page pagination
+- `DocumentType` model added to models.py; `document_type_id` FK added to `Document`
+- Migration script `backend/migrate_document_types.py` run successfully — 5 system types seeded
+- Settings API router `backend/app/routers/settings.py` created (6 endpoints)
+- Settings UI built: `frontend/src/components/SettingsPage.tsx` with 3 tabs:
+  - Document Types tab: CRUD for custom types, expandable rows, create/edit modal
+  - LLM Configuration tab: Ollama connection test + model list
+  - About tab: placeholder
+
+### Integration Test Results (2026-04-05)
+All 26/26 tests passing. Batch upload extracted from real files:
+- +9 actions, +5 risks, +3 deadlines, +2 dependencies across xlsx/docx/pdf
+
+### Next Requests (Future)
+1. **Wire document_type_id into upload flow** — user picks type at upload; processor uses its prompt/model
+2. **Add date range filters** (Last 30/90/365 days) to complement pagination
+3. **Archive old completed items** (auto-archive tasks completed >6 months ago)
+4. **Optimize notification generation** (currently scans all items every time)
+5. **Add vector search for chat** (better context retrieval for Q&A)
+6. **Server-side pagination** (add `limit`/`offset` to backend endpoints for very large datasets)
 
 ## Design Principles
 
@@ -260,7 +286,7 @@ App is working correctly if:
 - ✅ LLM extracts actions, risks, deadlines automatically
 - ✅ Daily briefing shows overdue/upcoming items
 - ✅ Chat answers questions about project intelligently
-- ✅ Data tables display with pagination (50 items/page)
+- ✅ Data tables display with pagination (50 items/page) — all 5 tables
 - ✅ CRUD operations work (mark complete, delete, edit)
 - ✅ All data persists across app restarts
 - ✅ No performance issues with current data volume
@@ -274,11 +300,11 @@ App is working correctly if:
 
 ## Questions to Answer
 
-1. **Did pagination get implemented in all 4 tables?**
-2. **Are there "Previous/Next" navigation controls?**
-3. **Do the tables still show total item count?**
-4. **Is there a "items per page" selector (optional but nice)?**
-5. **Any console errors or warnings in the Tauri app?**
+1. **Pagination is confirmed in all 5 tables** (Actions, Risks, Deadlines, Dependencies, Scope Items)
+2. **Previous/Next navigation controls** are present via the shared `Pagination` component
+3. **Total item count** shown in header (`Dependencies (12)`) and in paginator (`1–50 of 120`)
+4. **No "items per page" selector** — fixed at 50/page by design
+5. **Pagination hides itself** when total ≤ 50 items (clean UX for small datasets)
 
 ---
 

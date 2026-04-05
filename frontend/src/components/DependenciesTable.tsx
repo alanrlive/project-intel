@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "@/components/ui/toast";
+import { Pagination, PAGE_SIZE } from "@/components/ui/pagination";
 
 const TYPE_BADGE: Record<string, "urgent" | "warning" | "outline"> = {
   blocks:     "urgent",
@@ -16,6 +17,7 @@ const TYPE_BADGE: Record<string, "urgent" | "warning" | "outline"> = {
 export function DependenciesTable() {
   const [deps, setDeps] = useState<Dependency[]>([]);
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(0);
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ task_a: "", task_b: "", dependency_type: "blocks", notes: "" });
 
@@ -106,7 +108,7 @@ export function DependenciesTable() {
         <p className="text-sm text-zinc-500">No dependencies recorded.</p>
       ) : (
         <div className="space-y-2">
-          {deps.map((d) => (
+          {deps.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map((d) => (
             <Card key={d.id}>
               <CardContent className="py-3 flex items-center gap-3">
                 <span className="text-sm text-zinc-200 flex-1 min-w-0 truncate">{d.task_a}</span>
@@ -124,6 +126,7 @@ export function DependenciesTable() {
               </CardContent>
             </Card>
           ))}
+          <Pagination total={deps.length} page={page} onPage={setPage} />
         </div>
       )}
     </div>

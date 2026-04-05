@@ -1,0 +1,64 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R
+   /MediaBox [0 0 612 792]
+   /Contents 4 0 R
+   /Resources << /Font << /F1 5 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 1110 >>
+stream
+BT
+/F1 11 Tf
+50 750 Td
+14 TL
+(Project Budget Overview - Q2 2026) Tj T*
+() Tj T*
+(Total approved budget: GBP 450,000) Tj T*
+() Tj T*
+(Breakdown:) Tj T*
+(  - Vendor licences:       GBP 120,000  \(due April 30 2026\)) Tj T*
+(  - Development resources: GBP 200,000) Tj T*
+(  - Infrastructure:        GBP  80,000) Tj T*
+(  - Contingency \(10%\):     GBP  50,000) Tj T*
+() Tj T*
+(Risks:) Tj T*
+(  1. Vendor costs may increase by 15% if contract not signed by April 12.) Tj T*
+(     Impact: High. Likelihood: Medium. Owner: Finance team.) Tj T*
+(  2. Cloud infrastructure spend may exceed estimate by 20% due to traffic spike.) Tj T*
+(     Impact: Medium. Likelihood: Low. Mitigation: Set billing alerts at 80% threshold.) Tj T*
+() Tj T*
+(Actions:) Tj T*
+(  - Finance to raise PO for vendor by April 10 \(HIGH priority, due April 10 2026\)) Tj T*
+(  - DevOps to configure cost alerts by April 15 \(MEDIUM priority\)) Tj T*
+(  - PM to get CFO sign-off on contingency release by April 20) Tj T*
+() Tj T*
+(Deadlines:) Tj T*
+(  - Q2 budget freeze: April 30 2026) Tj T*
+(  - Mid-year review: July 1 2026) Tj T*
+() Tj T*
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000250 00000 n 
+0000001412 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+1482
+%%EOF
