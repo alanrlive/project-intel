@@ -4,14 +4,9 @@ from typing import Literal
 
 import httpx
 
-from app.config import get_settings
+from app.config import get_model_assignments, get_settings
 
 logger = logging.getLogger(__name__)
-
-ModelName = Literal["mistral-nemo:latest", "llama3.1:latest", "deepseek-r1:latest"]
-
-# Fallback order if the preferred extraction model isn't available
-EXTRACTION_FALLBACK = ["mistral-nemo:latest", "llama3.1:latest", "deepseek-r1:latest"]
 
 
 class OllamaUnavailableError(Exception):
@@ -20,8 +15,7 @@ class OllamaUnavailableError(Exception):
 
 class OllamaService:
     def __init__(self):
-        self.settings = get_settings()
-        self.base_url = self.settings.ollama_base_url
+        self.base_url = get_settings().ollama_base_url
 
     # ── Core generate ────────────────────────────────────────────────────────
 
@@ -31,16 +25,22 @@ class OllamaService:
         prompt: str,
         format: Literal["json", "text"] = "text",
         temperature: float = 0.7,
+        num_ctx: int | None = None,
     ) -> str:
         """
         Call Ollama /api/generate. Returns the response string.
         Raises OllamaUnavailableError if Ollama isn't running.
+        num_ctx sets the context window size passed to Ollama.
         """
+        options: dict = {"temperature": temperature}
+        if num_ctx is not None:
+            options["num_ctx"] = num_ctx
+
         payload: dict = {
             "model": model,
             "prompt": prompt,
             "stream": False,
-            "options": {"temperature": temperature},
+            "options": options,
         }
         if format == "json":
             payload["format"] = "json"
@@ -63,35 +63,59 @@ class OllamaService:
                 f"Ollama timed out after 120s while generating with model '{model}'."
             )
 
+    # ── Model resolution ─────────────────────────────────────────────────────
+
+    async def _resolve_model(self, preferred: str, role: str) -> str:
+        """
+        Resolve a model name against what Ollama has installed.
+        Accepts exact name or prefix match (e.g. "mistral-nemo" → "mistral-nemo:latest").
+        Falls back to any available model if preferred is not found.
+        Raises OllamaUnavailableError if nothing is available.
+        """
+        available = await self.list_model_names()
+
+        # Exact match
+        if preferred in available:
+            return preferred
+
+        # Prefix match (handles "mistral-nemo" vs "mistral-nemo:latest")
+        for name in available:
+            if name.startswith(preferred) or preferred.startswith(name.split(":")[0]):
+                logger.info(
+                    "Model '%s' matched as '%s' for role '%s'", preferred, name, role
+                )
+                return name
+
+        # Fallback to first available model
+        if available:
+            logger.warning(
+                "Configured model '%s' not found for role '%s'. "
+                "Falling back to '%s'",
+                preferred, role, available[0],
+            )
+            return available[0]
+
+        raise OllamaUnavailableError(
+            f"No models available in Ollama. "
+            f"Pull at least one model: `ollama pull {preferred}`"
+        )
+
     # ── Convenience wrappers ─────────────────────────────────────────────────
 
     async def extract(self, prompt: str) -> dict:
         """
-        Structured extraction — uses mistral-nemo with JSON format.
-        Falls back to llama3.1 if mistral-nemo is not installed.
+        Structured extraction — uses the configured extraction model and context length.
+        Assignments are read from settings.json at call time so runtime
+        changes take effect without restarting the backend.
         Returns parsed dict (raises ValueError on bad JSON).
         """
-        available = await self.list_model_names()
-        model = self.settings.llm_extraction
-
-        if model not in available:
-            for fallback in EXTRACTION_FALLBACK:
-                if fallback in available:
-                    logger.warning(
-                        "Model %s not found, falling back to %s for extraction",
-                        model,
-                        fallback,
-                    )
-                    model = fallback
-                    break
-            else:
-                raise OllamaUnavailableError(
-                    "No suitable extraction model available. "
-                    f"Pull one of: {EXTRACTION_FALLBACK}"
-                )
-
-        raw = await self.generate(model=model, prompt=prompt, format="json", temperature=0.3)
-
+        assignments = get_model_assignments()
+        role_cfg = assignments["extraction"]
+        model = await self._resolve_model(role_cfg["model"], "extraction")
+        raw = await self.generate(
+            model=model, prompt=prompt, format="json",
+            temperature=0.3, num_ctx=role_cfg["context"],
+        )
         try:
             return json.loads(raw)
         except json.JSONDecodeError as exc:
@@ -99,21 +123,23 @@ class OllamaService:
             raise ValueError(f"LLM returned malformed JSON: {exc}") from exc
 
     async def chat(self, prompt: str) -> str:
-        """General Q&A — uses llama3.1."""
+        """General Q&A — uses the configured qa model and context length."""
+        assignments = get_model_assignments()
+        role_cfg = assignments["qa"]
+        model = await self._resolve_model(role_cfg["model"], "qa")
         return await self.generate(
-            model=self.settings.llm_qa,
-            prompt=prompt,
-            format="text",
-            temperature=0.7,
+            model=model, prompt=prompt, format="text",
+            temperature=0.7, num_ctx=role_cfg["context"],
         )
 
     async def reason(self, prompt: str) -> str:
-        """Deep reasoning — uses deepseek-r1."""
+        """Deep reasoning — uses the configured reasoning model and context length."""
+        assignments = get_model_assignments()
+        role_cfg = assignments["reasoning"]
+        model = await self._resolve_model(role_cfg["model"], "reasoning")
         return await self.generate(
-            model=self.settings.llm_reasoning,
-            prompt=prompt,
-            format="text",
-            temperature=0.5,
+            model=model, prompt=prompt, format="text",
+            temperature=0.5, num_ctx=role_cfg["context"],
         )
 
     # ── Health & discovery ───────────────────────────────────────────────────
@@ -146,23 +172,18 @@ class OllamaService:
         """
         Full status dict used by the /llm/status endpoint.
         Checks health, lists models, and flags which configured models are ready.
+        Model assignments are read dynamically from settings.json.
         """
+        assignments = get_model_assignments()
         healthy = await self.check_health()
+
         if not healthy:
             return {
                 "ollama_running": False,
                 "ollama_url": self.base_url,
                 "models_available": [],
-                "configured_models": {
-                    "extraction": self.settings.llm_extraction,
-                    "qa": self.settings.llm_qa,
-                    "reasoning": self.settings.llm_reasoning,
-                },
-                "models_ready": {
-                    "extraction": False,
-                    "qa": False,
-                    "reasoning": False,
-                },
+                "configured_models": assignments,
+                "models_ready": {role: False for role in assignments},
                 "warning": (
                     f"Ollama is not running at {self.base_url}. "
                     "Start it with: `ollama serve`"
@@ -172,22 +193,23 @@ class OllamaService:
         models = await self.list_models()
         names = [m["name"] for m in models]
 
-        configured = {
-            "extraction": self.settings.llm_extraction,
-            "qa": self.settings.llm_qa,
-            "reasoning": self.settings.llm_reasoning,
-        }
+        # A model is "ready" if it has an exact or prefix match in the available list
+        def is_ready(model_name: str) -> bool:
+            if model_name in names:
+                return True
+            return any(
+                n.startswith(model_name) or model_name.startswith(n.split(":")[0])
+                for n in names
+            )
 
-        missing = [name for name in configured.values() if name not in names]
+        missing = [m for m in assignments.values() if not is_ready(m)]
 
         return {
             "ollama_running": True,
             "ollama_url": self.base_url,
             "models_available": names,
-            "configured_models": configured,
-            "models_ready": {
-                role: model in names for role, model in configured.items()
-            },
+            "configured_models": assignments,
+            "models_ready": {role: is_ready(model) for role, model in assignments.items()},
             "missing_models": missing,
             "pull_commands": [f"ollama pull {m}" for m in missing],
         }

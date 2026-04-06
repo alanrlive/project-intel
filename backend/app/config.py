@@ -34,7 +34,8 @@ class Settings(BaseSettings):
     database_url: str = f"sqlite:///{DATA_DIR}/project.db"
     ollama_base_url: str = "http://localhost:11434"
 
-    # Model assignments (prefix llm_ to avoid pydantic's protected model_ namespace)
+    # Default model assignments — overridden at runtime by settings.json values.
+    # Prefix llm_ to avoid pydantic's protected model_ namespace.
     llm_extraction: str = "mistral-nemo:latest"
     llm_qa: str = "llama3.1:latest"
     llm_reasoning: str = "deepseek-r1:latest"
@@ -51,3 +52,63 @@ class Settings(BaseSettings):
 @lru_cache()
 def get_settings() -> Settings:
     return Settings()
+
+
+# ── Dynamic model assignments ─────────────────────────────────────────────────
+# Stored in settings.json so they can be changed at runtime without restart.
+#
+# Schema (v2):
+#   {"extraction": {"model": str, "context": int},
+#    "qa":         {"model": str, "context": int},
+#    "reasoning":  {"model": str, "context": int}}
+#
+# Backward compat: old entries stored as plain strings are migrated on read.
+
+_DEFAULT_CONTEXTS = {"extraction": 8192, "qa": 8192, "reasoning": 16384}
+
+
+def _normalise_assignment(value, role: str) -> dict:
+    """Coerce a stored value (str or dict) into {"model": str, "context": int}."""
+    if isinstance(value, dict):
+        return {
+            "model":   str(value.get("model", "")),
+            "context": int(value.get("context", _DEFAULT_CONTEXTS[role])),
+        }
+    # Legacy flat-string format
+    return {"model": str(value), "context": _DEFAULT_CONTEXTS[role]}
+
+
+def get_model_assignments() -> dict:
+    """
+    Return current model role assignments with context lengths.
+    Reads from settings.json; falls back to Settings class defaults.
+    Returns: {"extraction": {"model": str, "context": int}, "qa": ..., "reasoning": ...}
+    """
+    cfg = read_app_config()
+    stored: dict = cfg.get("model_assignments", {})
+    defaults = get_settings()
+    fallbacks = {
+        "extraction": defaults.llm_extraction,
+        "qa":         defaults.llm_qa,
+        "reasoning":  defaults.llm_reasoning,
+    }
+    result = {}
+    for role, default_model in fallbacks.items():
+        if role in stored and stored[role]:
+            result[role] = _normalise_assignment(stored[role], role)
+        else:
+            result[role] = {"model": default_model, "context": _DEFAULT_CONTEXTS[role]}
+    return result
+
+
+def write_model_assignments(assignments: dict) -> None:
+    """
+    Persist model role assignments to settings.json.
+    Expects: {"extraction": {"model": str, "context": int}, "qa": ..., "reasoning": ...}
+    """
+    cfg = read_app_config()
+    cfg["model_assignments"] = {
+        role: {"model": assignments[role]["model"], "context": int(assignments[role]["context"])}
+        for role in ("extraction", "qa", "reasoning")
+    }
+    write_app_config(cfg)

@@ -7,6 +7,8 @@ import type {
   DocumentType,
   IntakeScanResult,
   LlmStatus,
+  ModelAssignments,
+  RoleAssignment,
   NotificationsResponse,
   OllamaTestResult,
   QueryResponse,
@@ -239,4 +241,22 @@ export const api = {
 
   testOllamaConnection: () =>
     request<OllamaTestResult>("/settings/ollama/test", { method: "POST" }),
+
+  pullOllamaModel: (model: string) =>
+    request<{ success: boolean; model: string; error?: string }>("/settings/ollama/pull", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model }),
+    }),
+
+  // ── Settings — Model assignments ──────────────────────────────────────────
+  getModelAssignments: () =>
+    request<ModelAssignments>("/settings/model-assignments"),
+
+  saveModelAssignments: (data: ModelAssignments) =>
+    request<ModelAssignments>("/settings/model-assignments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }),
 };

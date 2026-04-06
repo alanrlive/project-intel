@@ -46,25 +46,34 @@ _SYSTEM_TYPES = [
         "name": "General",
         "target_model": "mistral-nemo",
         "extraction_prompt": (
-            "Extract all relevant project management information from this document. "
-            "Return a JSON object with these arrays (omit any array that has no items):\n"
+            'Extract project management data as JSON (omit empty arrays):\n'
             '- "actions": [{"description": str, "owner": str|null, "due_date": "YYYY-MM-DD"|null, "priority": "high"|"medium"|"low"}]\n'
             '- "risks": [{"description": str, "impact": "high"|"medium"|"low", "likelihood": "high"|"medium"|"low", "mitigation": str|null}]\n'
             '- "deadlines": [{"description": str, "deadline_date": "YYYY-MM-DD"}]\n'
-            '- "dependencies": [{"task_a": str, "dependency_type": "blocks"|"enables"|"relates_to", "task_b": str, "notes": str|null}]\n'
-            '- "scope_items": [{"description": str, "source": "change_request"|"original_plan"|"meeting", "impact_assessment": str|null}]\n'
-            "Return only valid JSON, no explanation or markdown."
+            '- "dependencies": [{"task_a": str, "dependency_type": "blocks"|"enables"|"relates_to", "task_b": str}]\n'
+            '- "scope_items": [{"description": str, "source": "deferred"|"change_request"|"original"|"meeting"}]\n'
+            "\n"
+            "Scope items: future features, ideas marked DEFERRED/V3/OUT OF SCOPE, phrases like \"it would be cool if\".\n"
+            "Dependencies: \"A blocks B\" = A must finish first. Check all sheets/sections.\n"
+            "Dates: use task dates, not file metadata. Assume current/next year if ambiguous.\n"
+            "JSON only, no markdown."
         ),
     },
     {
         "name": "RAID Log",
         "target_model": "mistral-nemo",
         "extraction_prompt": (
-            "Extract all RAID items from this document. "
+            "Extract all RAID items from this document including from ALL sheets/tabs if spreadsheet. "
             "Return a JSON object with these arrays (omit any that have no items):\n"
             '- "risks": [{"description": str, "impact": "high"|"medium"|"low", "likelihood": "high"|"medium"|"low", "mitigation": str|null}]\n'
             '- "actions": [{"description": str, "owner": str|null, "due_date": "YYYY-MM-DD"|null, "priority": "high"|"medium"|"low"}]\n'
             '- "dependencies": [{"task_a": str, "dependency_type": "blocks"|"enables"|"relates_to", "task_b": str, "notes": str|null}]\n'
+            "\n"
+            'Dependencies: "A blocks B" = A must finish before B can start. A is the blocker/prerequisite. '
+            'B is waiting/blocked. Example: "Backend API blocks Frontend UI" means backend must complete first.\n'
+            "\n"
+            "DATES: Use dates mentioned in descriptions, not file metadata dates.\n"
+            "\n"
             "Assumptions and issues should be mapped to actions where an owner or due date is present, "
             "otherwise to risks. Return only valid JSON, no explanation or markdown."
         ),
@@ -119,7 +128,11 @@ def init_db():
 
 
 def _seed_system_types():
-    """Insert the 5 built-in document types if they don't exist yet. Idempotent."""
+    """
+    Insert the 5 built-in document types if they don't exist yet.
+    Also updates extraction_prompt on existing system types so that
+    prompt changes take effect after a backend restart (idempotent).
+    """
     from app.models import DocumentType  # local import to avoid circular deps
     db = SessionLocal()
     try:
@@ -132,6 +145,10 @@ def _seed_system_types():
                     target_model=dt["target_model"],
                     is_system=True,
                 ))
+            else:
+                # Keep prompt in sync with code — system types are not user-editable
+                exists.extraction_prompt = dt["extraction_prompt"]
+                exists.target_model = dt["target_model"]
         db.commit()
     finally:
         db.close()

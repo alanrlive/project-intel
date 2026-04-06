@@ -117,24 +117,10 @@ def _extract_eml(file_path: Path) -> str:
     return "\n".join(parts)
 
 
-def _excel_to_markdown(file_path: Path) -> str:
-    """
-    Convert the first sheet of an Excel workbook to a Markdown table.
-    Ignores formatting/colours/formulas — values only.
-    Merged cells are handled by openpyxl's min_row iteration (merged value
-    appears on the top-left cell; others are None → shown as empty).
-    """
-    try:
-        import openpyxl
-    except ImportError:
-        raise RuntimeError("openpyxl is not installed. Run: pip install openpyxl")
-
-    wb = openpyxl.load_workbook(file_path, data_only=True)
-    ws = wb.active  # first sheet
-
+def _sheet_to_markdown(ws) -> str:
+    """Convert a single openpyxl worksheet to a Markdown table. Returns empty string if blank."""
     rows = []
     for row in ws.iter_rows(values_only=True):
-        # Skip fully empty rows
         if all(cell is None or str(cell).strip() == "" for cell in row):
             continue
         rows.append([str(cell) if cell is not None else "" for cell in row])
@@ -142,11 +128,9 @@ def _excel_to_markdown(file_path: Path) -> str:
     if not rows:
         return ""
 
-    # Use first non-empty row as header
     header = rows[0]
     data_rows = rows[1:]
 
-    # Determine column widths for padding
     col_widths = [max(len(h), 3) for h in header]
     for row in data_rows:
         for i, cell in enumerate(row):
@@ -161,14 +145,34 @@ def _excel_to_markdown(file_path: Path) -> str:
         return "| " + " | ".join(padded) + " |"
 
     separator = "| " + " | ".join("-" * w for w in col_widths) + " |"
-
     lines = [fmt_row(header), separator]
     for row in data_rows:
-        # Pad short rows with empty strings
         padded = row + [""] * (len(col_widths) - len(row))
         lines.append(fmt_row(padded))
 
     return "\n".join(lines)
+
+
+def _excel_to_markdown(file_path: Path) -> str:
+    """
+    Convert all sheets of an Excel workbook to Markdown tables separated by sheet headings.
+    Ignores formatting/colours/formulas — values only.
+    """
+    try:
+        import openpyxl
+    except ImportError:
+        raise RuntimeError("openpyxl is not installed. Run: pip install openpyxl")
+
+    wb = openpyxl.load_workbook(file_path, data_only=True)
+    sections = []
+
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        table = _sheet_to_markdown(ws)
+        if table:
+            sections.append(f"## {sheet_name}\n\n{table}")
+
+    return "\n\n".join(sections)
 
 
 def extract_text(file_path: Path) -> str:

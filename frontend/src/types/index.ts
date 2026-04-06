@@ -50,7 +50,7 @@ export interface Dependency {
 export interface ScopeItem {
   id: number;
   description: string;
-  source: "original_plan" | "change_request" | "meeting";
+  source: "original_plan" | "original" | "change_request" | "meeting" | "deferred";
   approved: boolean;
   impact_assessment: string | null;
   added_date: string | null;
@@ -144,6 +144,17 @@ export interface OllamaTestResult {
   model_count?: number;
   models?: string[];
   error?: string;
+}
+
+export interface RoleAssignment {
+  model: string;
+  context: number;
+}
+
+export interface ModelAssignments {
+  extraction: RoleAssignment;
+  qa: RoleAssignment;
+  reasoning: RoleAssignment;
 }
 
 export interface LlmStatus {

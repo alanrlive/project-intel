@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -452,6 +453,20 @@ def list_documents(db: Session = Depends(get_db)):
         }
         for d in docs
     ]
+
+
+@router.get("/documents/{doc_id}/file", tags=["documents"])
+def download_document_file(doc_id: int, db: Session = Depends(get_db)):
+    """Serve the original uploaded file as a download."""
+    doc = db.query(Document).filter(Document.id == doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    if not doc.file_path:
+        raise HTTPException(status_code=404, detail="No file stored for this document.")
+    p = Path(doc.file_path)
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="File missing from disk.")
+    return FileResponse(str(p), filename=doc.filename)
 
 
 @router.get("/documents/{doc_id}", tags=["documents"])

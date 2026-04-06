@@ -1,33 +1,72 @@
-import { useEffect, useState } from "react";
-import { Plus, Trash2, CheckCircle } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Plus, Trash2, CheckCircle, Download, FileDown } from "lucide-react";
 import { api } from "@/lib/api";
-import type { Deadline } from "@/types";
+import type { Deadline, Document } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "@/components/ui/toast";
 import { dueDateLabel } from "@/lib/utils";
 import { Pagination, PAGE_SIZE } from "@/components/ui/pagination";
+import {
+  SortTh, SortDir, nextDir, applySort,
+  exportCsv, csvDate, downloadDocumentFile,
+} from "@/lib/tableUtils";
+
+type SortField = "deadline_date" | "met";
+
+function sortValue(d: Deadline, field: SortField): string | number | boolean {
+  switch (field) {
+    case "deadline_date": return d.deadline_date;
+    case "met":           return d.met;
+  }
+}
 
 export function DeadlinesTable() {
-  const [deadlines, setDeadlines] = useState<Deadline[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [metFilter, setMetFilter] = useState<"" | "true" | "false">("");
-  const [page, setPage] = useState(0);
-  const [showAdd, setShowAdd] = useState(false);
-  const [newDesc, setNewDesc] = useState("");
-  const [newDate, setNewDate] = useState("");
+  const [deadlines, setDeadlines]   = useState<Deadline[]>([]);
+  const [docs, setDocs]             = useState<Map<number, Document>>(new Map());
+  const [loading, setLoading]       = useState(true);
+  const [metFilter, setMetFilter]   = useState<"" | "true" | "false">("");
+  const [page, setPage]             = useState(0);
+  const [sortField, setSortField]   = useState<SortField | null>(null);
+  const [sortDir, setSortDir]       = useState<SortDir>(null);
+  const [showAdd, setShowAdd]       = useState(false);
+  const [newDesc, setNewDesc]       = useState("");
+  const [newDate, setNewDate]       = useState("");
 
   const load = async () => {
     setLoading(true);
     try {
       const met = metFilter === "" ? undefined : metFilter === "true";
-      setDeadlines(await api.listDeadlines(met));
+      const [data, docList] = await Promise.all([
+        api.listDeadlines(met),
+        api.listDocuments(),
+      ]);
+      setDeadlines(data);
+      setDocs(new Map(docList.map((d) => [d.id, d])));
     } catch { toast("Failed to load deadlines", "error"); }
     finally { setLoading(false); }
   };
 
   useEffect(() => { load(); setPage(0); }, [metFilter]);
+
+  const onSort = (field: string) => {
+    const f = field as SortField;
+    if (f === sortField) {
+      const next = nextDir(sortDir);
+      setSortDir(next);
+      if (next === null) setSortField(null);
+    } else {
+      setSortField(f);
+      setSortDir("asc");
+    }
+    setPage(0);
+  };
+
+  const sorted = useMemo(
+    () => applySort(deadlines, sortField, sortDir, (d, f) => sortValue(d, f as SortField)),
+    [deadlines, sortField, sortDir],
+  );
 
   const markMet = async (id: number, met: boolean) => {
     try {
@@ -57,13 +96,33 @@ export function DeadlinesTable() {
     } catch { toast("Create failed", "error"); }
   };
 
+  const handleExport = () => {
+    const rows = sorted.map((d) => ({
+      description:   d.description,
+      deadline_date: d.deadline_date,
+      met:           d.met ? "Yes" : "No",
+      source_doc:    d.source_doc_id ? (docs.get(d.source_doc_id)?.filename ?? "") : "",
+    }));
+    exportCsv(rows, [
+      { key: "description",   label: "Description" },
+      { key: "deadline_date", label: "Deadline Date" },
+      { key: "met",           label: "Met" },
+      { key: "source_doc",    label: "Source Document" },
+    ], `deadlines_export_${csvDate()}.csv`);
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold text-zinc-100">
           Deadlines <span className="text-zinc-500 text-sm font-normal">({deadlines.length})</span>
         </h2>
-        <Button size="sm" onClick={() => setShowAdd((s) => !s)}><Plus size={13} /> Add</Button>
+        <div className="flex gap-2">
+          <Button size="sm" variant="ghost" onClick={handleExport} title="Export all to CSV">
+            <FileDown size={13} /> Export CSV
+          </Button>
+          <Button size="sm" onClick={() => setShowAdd((s) => !s)}><Plus size={13} /> Add</Button>
+        </div>
       </div>
 
       <div className="flex gap-2">
@@ -110,14 +169,16 @@ export function DeadlinesTable() {
             <thead>
               <tr className="border-b border-zinc-700 text-left text-xs text-zinc-500 uppercase tracking-wider">
                 <th className="pb-2 pr-4 font-medium">Description</th>
-                <th className="pb-2 pr-4 font-medium">Date</th>
-                <th className="pb-2 pr-4 font-medium">Status</th>
+                <SortTh label="Date"   field="deadline_date" sortField={sortField} sortDir={sortDir} onSort={onSort} />
+                <SortTh label="Status" field="met"           sortField={sortField} sortDir={sortDir} onSort={onSort} />
+                <th className="pb-2 pr-4 font-medium">Document</th>
                 <th className="pb-2 font-medium"></th>
               </tr>
             </thead>
             <tbody>
-              {deadlines.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map((d) => {
-                const due = dueDateLabel(d.deadline_date);
+              {sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map((d) => {
+                const due    = dueDateLabel(d.deadline_date);
+                const srcDoc = d.source_doc_id ? docs.get(d.source_doc_id) : undefined;
                 return (
                   <tr key={d.id} className="border-b border-zinc-800 hover:bg-zinc-800/40">
                     <td className="py-2.5 pr-4 text-zinc-200">
@@ -133,10 +194,30 @@ export function DeadlinesTable() {
                         {d.met ? "Met" : "Pending"}
                       </Badge>
                     </td>
+                    <td className="py-2.5 pr-4 max-w-[140px]">
+                      {srcDoc ? (
+                        <button
+                          onClick={async () => {
+                            try { await downloadDocumentFile(srcDoc.id, srcDoc.filename); }
+                            catch { toast("Could not download file", "error"); }
+                          }}
+                          className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 truncate max-w-full"
+                          title={`Download ${srcDoc.filename}`}
+                        >
+                          <Download size={11} className="shrink-0" />
+                          <span className="truncate">{srcDoc.filename}</span>
+                        </button>
+                      ) : (
+                        <span className="text-zinc-600 text-xs">—</span>
+                      )}
+                    </td>
                     <td className="py-2.5">
                       <div className="flex gap-1">
-                        <Button size="icon" variant="ghost" title={d.met ? "Reopen" : "Mark met"}
-                          onClick={() => markMet(d.id, !d.met)}>
+                        <Button
+                          size="icon" variant="ghost"
+                          title={d.met ? "Reopen" : "Mark met"}
+                          onClick={() => markMet(d.id, !d.met)}
+                        >
                           <CheckCircle size={14} className={d.met ? "text-zinc-500" : "text-emerald-400"} />
                         </Button>
                         <Button size="icon" variant="ghost" onClick={() => deleteDeadline(d.id)}>
@@ -149,7 +230,7 @@ export function DeadlinesTable() {
               })}
             </tbody>
           </table>
-          <Pagination total={deadlines.length} page={page} onPage={setPage} />
+          <Pagination total={sorted.length} page={page} onPage={setPage} />
         </div>
       )}
     </div>

@@ -11,7 +11,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.config import get_settings, read_app_config, write_app_config
+from app.config import (
+    get_settings, read_app_config, write_app_config,
+    get_model_assignments, write_model_assignments,
+)
 from app.database import get_db
 from app.models import Document, DocumentType
 
@@ -183,6 +186,47 @@ def clear_intake_folder():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Model assignment endpoints
+# ══════════════════════════════════════════════════════════════════════════════
+
+VALID_CONTEXTS = {4096, 8192, 16384, 32768}
+
+
+class RoleAssignment(BaseModel):
+    model:   str = Field(..., min_length=1, max_length=200)
+    context: int = Field(default=8192)
+
+    def validate_context(self) -> "RoleAssignment":
+        if self.context not in VALID_CONTEXTS:
+            raise ValueError(f"context must be one of {sorted(VALID_CONTEXTS)}")
+        return self
+
+
+class ModelAssignmentsBody(BaseModel):
+    extraction: RoleAssignment
+    qa:         RoleAssignment
+    reasoning:  RoleAssignment
+
+
+@router.get("/model-assignments", tags=["settings"])
+def get_assignments():
+    """Return current model role assignments with context lengths."""
+    return get_model_assignments()
+
+
+@router.post("/model-assignments", tags=["settings"])
+def save_assignments(body: ModelAssignmentsBody):
+    """Save model role assignments to settings.json. Takes effect immediately."""
+    assignments = {
+        "extraction": {"model": body.extraction.model, "context": body.extraction.context},
+        "qa":         {"model": body.qa.model,         "context": body.qa.context},
+        "reasoning":  {"model": body.reasoning.model,  "context": body.reasoning.context},
+    }
+    write_model_assignments(assignments)
+    return assignments
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Ollama endpoints
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -232,3 +276,36 @@ async def test_ollama_connection():
             "ollama_url": _cfg.ollama_base_url,
             "error": str(exc),
         }
+
+
+class PullModelBody(BaseModel):
+    model: str = Field(..., min_length=1, max_length=200)
+
+
+@router.post("/ollama/pull", tags=["settings"])
+async def pull_ollama_model(body: PullModelBody):
+    """
+    Trigger `ollama pull <model>` via the Ollama HTTP API.
+    Blocks until the pull completes (up to 10 minutes).
+    Returns success/failure status — never raises.
+    """
+    url = f"{_cfg.ollama_base_url}/api/pull"
+    try:
+        async with httpx.AsyncClient(timeout=600.0) as client:
+            resp = await client.post(url, json={"name": body.model, "stream": False})
+            resp.raise_for_status()
+            return {"success": True, "model": body.model}
+    except httpx.ConnectError:
+        return {
+            "success": False,
+            "model": body.model,
+            "error": f"Cannot reach Ollama at {_cfg.ollama_base_url}",
+        }
+    except httpx.TimeoutException:
+        return {
+            "success": False,
+            "model": body.model,
+            "error": "Pull timed out after 10 minutes. The model may still be downloading.",
+        }
+    except Exception as exc:
+        return {"success": False, "model": body.model, "error": str(exc)}
