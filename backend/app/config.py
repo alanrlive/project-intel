@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from functools import lru_cache
 from pydantic_settings import BaseSettings
@@ -6,6 +7,26 @@ from pydantic_settings import BaseSettings
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 UPLOADS_DIR = DATA_DIR / "uploads"
+CONFIG_DIR = BASE_DIR / "config"
+APP_CONFIG_FILE = CONFIG_DIR / "settings.json"
+
+
+def read_app_config() -> dict:
+    """Read the mutable app config (intake folder path, etc.) from JSON file."""
+    if APP_CONFIG_FILE.exists():
+        try:
+            return json.loads(APP_CONFIG_FILE.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return {}
+    return {}
+
+
+def write_app_config(data: dict) -> None:
+    """Persist the mutable app config to JSON file."""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    APP_CONFIG_FILE.write_text(
+        json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
 
 
 class Settings(BaseSettings):

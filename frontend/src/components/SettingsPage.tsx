@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ChevronDown, ChevronRight, Pencil, Trash2, Plus, Wifi, WifiOff, RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronRight, Pencil, Trash2, Plus, Wifi, WifiOff, RefreshCw, Folder, X, Check } from "lucide-react";
 import { api } from "@/lib/api";
 import type { DocumentType } from "@/types";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 
-type SettingsTab = "document-types" | "llm" | "about";
+type SettingsTab = "document-types" | "folders" | "llm" | "about";
 
 // ── Modal state ───────────────────────────────────────────────────────────────
 
@@ -449,6 +449,159 @@ function LlmConfigPanel() {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// Folders panel
+// ══════════════════════════════════════════════════════════════════════════════
+
+function FoldersPanel() {
+  const [currentPath, setCurrentPath] = useState<string | null>(null);
+  const [inputPath, setInputPath] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [scanResult, setScanResult] = useState<{ files: number; error?: string } | null>(null);
+
+  useEffect(() => {
+    api.getIntakeFolder()
+      .then((r) => {
+        setCurrentPath(r.path ?? null);
+        setInputPath(r.path ?? "");
+      })
+      .catch(() => {});
+  }, []);
+
+  const save = async () => {
+    if (!inputPath.trim()) return;
+    setSaving(true);
+    setScanResult(null);
+    try {
+      const r = await api.setIntakeFolder(inputPath.trim());
+      setCurrentPath(r.path);
+      setInputPath(r.path);
+      toast("Intake folder saved", "success");
+      // Quick scan to show file count
+      const scan = await api.scanIntakeFolder();
+      setScanResult({ files: scan.files.length, error: scan.error });
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Could not save folder", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const clear = async () => {
+    setClearing(true);
+    try {
+      await api.clearIntakeFolder();
+      setCurrentPath(null);
+      setInputPath("");
+      setScanResult(null);
+      toast("Intake folder cleared", "info");
+    } catch {
+      toast("Could not clear folder", "error");
+    } finally {
+      setClearing(false);
+    }
+  };
+
+  const scan = async () => {
+    if (!currentPath) return;
+    try {
+      const result = await api.scanIntakeFolder();
+      setScanResult({ files: result.files.length, error: result.error });
+      if (result.error) {
+        toast(result.error, "error");
+      } else {
+        toast(`${result.files.length} file(s) in intake folder`, "info");
+      }
+    } catch {
+      toast("Scan failed", "error");
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-lg font-semibold text-zinc-100">Folders</h2>
+        <p className="text-xs text-zinc-500 mt-0.5">
+          Configure folders for automatic document intake.
+        </p>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            <div className="flex items-center gap-2">
+              <Folder size={15} className="text-zinc-400" />
+              Intake Folder
+            </div>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-xs text-zinc-400">
+            Drop files into this folder outside the app. Use{" "}
+            <span className="font-medium text-zinc-300">Load from Intake Folder</span>{" "}
+            on the Upload screen to queue them for processing.
+          </p>
+
+          {/* Path input */}
+          <div className="space-y-2">
+            <label className="text-xs font-medium text-zinc-400 block">Folder path</label>
+            <div className="flex gap-2">
+              <input
+                className={cn(INPUT, "flex-1 font-mono text-xs")}
+                value={inputPath}
+                onChange={(e) => setInputPath(e.target.value)}
+                placeholder="e.g. C:\Users\Alan\ProjectIntakeFolder"
+                onKeyDown={(e) => e.key === "Enter" && save()}
+              />
+              <Button size="sm" onClick={save} disabled={saving || !inputPath.trim()}>
+                {saving ? "Saving…" : "Save"}
+              </Button>
+            </div>
+          </div>
+
+          {/* Current status */}
+          {currentPath && (
+            <div className="rounded bg-zinc-800 border border-zinc-700 px-3 py-2.5 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Check size={13} className="text-emerald-400 shrink-0" />
+                  <span className="text-xs font-mono text-zinc-300 truncate">{currentPath}</span>
+                </div>
+                <div className="flex items-center gap-1 shrink-0 ml-2">
+                  <Button size="sm" variant="ghost" onClick={scan} className="text-xs px-2 py-1 h-auto">
+                    Scan
+                  </Button>
+                  <button
+                    onClick={clear}
+                    disabled={clearing}
+                    className="text-zinc-600 hover:text-red-400 transition-colors p-1"
+                    title="Clear intake folder"
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+              </div>
+              {scanResult && (
+                <p className={cn("text-xs", scanResult.error ? "text-red-400" : "text-zinc-500")}>
+                  {scanResult.error
+                    ? `Error: ${scanResult.error}`
+                    : `${scanResult.files} supported file(s) ready to load`}
+                </p>
+              )}
+            </div>
+          )}
+
+          <div className="text-xs text-zinc-600 space-y-1 pt-1">
+            <p>Supported: PDF · DOCX · XLSX · TXT · MD</p>
+            <p>After processing, files are moved to the uploads folder automatically.</p>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // About panel
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -480,6 +633,7 @@ function AboutPanel() {
 
 const TABS: { id: SettingsTab; label: string }[] = [
   { id: "document-types", label: "Document Types" },
+  { id: "folders",        label: "Folders" },
   { id: "llm",            label: "LLM Configuration" },
   { id: "about",          label: "About" },
 ];
@@ -514,6 +668,7 @@ export function SettingsPage() {
       {/* Panel */}
       <div>
         {tab === "document-types" && <DocumentTypesPanel />}
+        {tab === "folders"        && <FoldersPanel />}
         {tab === "llm"            && <LlmConfigPanel />}
         {tab === "about"          && <AboutPanel />}
       </div>

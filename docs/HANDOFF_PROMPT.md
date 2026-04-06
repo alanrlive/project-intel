@@ -2,364 +2,232 @@ HANDOFF PROMPT - Copy Everything Below
 markdown# Project Intel V2 - Development Handoff
 
 ## Project Overview
-I'm building a GDPR-compliant, self-hosted AI-powered project management assistant called **Project Intel V2**. The tool uses local LLMs (Ollama) to analyze project documents, track tasks, detect risks, and provide intelligent briefings.
+I'm building a GDPR-compliant, self-hosted AI-powered project management assistant called **Project Intel V2**. The tool uses local LLMs (Ollama) to analyze project documents, track tasks, detect risks, and provide intelligent briefings. All data stays on-device — no cloud, no external APIs.
 
 ## Current Status: WORKING PRODUCTION APP ✅
 
-### What's Complete
-- **Backend (FastAPI + SQLite):** Fully functional with 6 API endpoint groups
-- **Frontend (Tauri + React):** Desktop application with 7 main views
-- **LLM Integration (Ollama):** Using mistral-nemo, llama3.1, deepseek-r1 models
+### What's Complete (as of 2026-04-06)
+- **Backend (FastAPI + SQLite):** 8 tables, 7 router modules
+- **Frontend (Tauri v2 + React):** 8 views including Settings with 4 tabs
+- **LLM Integration (Ollama):** mistral-nemo, llama3.1, deepseek-r1 — model fallback logic
 - **Features Working:**
-  - Document upload (drag-and-drop, PDF/DOCX/TXT/MD/EML support)
-  - Automatic extraction (actions, risks, deadlines, dependencies via LLM)
+  - Batch document upload (drag-and-drop, multi-file queue, per-file type selection)
+  - Excel support (.xlsx → markdown table via openpyxl)
+  - Custom document types with per-type extraction prompts and LLM model selection
+  - Intake folder: configure a watched folder, scan it, batch-process files by path, auto-move on success
+  - Automatic structured extraction (actions, risks, deadlines, dependencies, scope items)
   - Daily briefing with smart notifications (overdue, upcoming, high-risk)
-  - Conversational Q&A chat with model selection
-  - Data tables (Actions, Risks, Deadlines, Dependencies) with CRUD operations
-  - Visual dependency tracking
-  - Status management (mark actions complete, etc.)
-  - Full data persistence across restarts
+  - Conversational Q&A chat (deep reasoning toggle, citations)
+  - All 5 data tables with CRUD operations and pagination (50/page)
+  - Settings page: Document Types CRUD, Folders/intake config, LLM status, About
+  - Integration tests: 26/26 passing
 
-### Tech Stack
+## Tech Stack
 **Backend:**
-- Python 3.11+, FastAPI, SQLAlchemy, SQLite
+- Python 3.11+, FastAPI, SQLAlchemy 2.0.36, SQLite (WAL mode, FK enforcement)
 - Ollama for local LLM inference (localhost:11434)
-- PyPDF2, python-docx for document parsing
+- openpyxl (Excel), PyPDF2, python-docx for document parsing
+- APScheduler for daily briefing cron
 - Running on: http://localhost:8000
 
 **Frontend:**
-- Tauri 1.5+ (Rust + web technologies)
-- React 18 + TypeScript
-- shadcn/ui components (Tailwind-based)
-- Vite dev server on http://localhost:1420
-
-**Database Schema (SQLite):**
-- documents (id, filename, upload_date, doc_type, content_text, file_path)
-- actions (id, description, owner, due_date, status, priority, created_from_doc_id)
-- risks (id, description, impact, likelihood, mitigation, status)
-- deadlines (id, description, deadline_date, met, source_doc_id)
-- dependencies (id, task_a, task_b, dependency_type, notes)
-- scope_items (id, description, added_date, source, approved)
-- notifications (id, type, message, created_at, read, severity, related_id, related_type)
+- Tauri v2 (Rust + webview)
+- React 18 + TypeScript + Tailwind CSS v4
+- Vite dev server (opens as native window, not browser)
 
 ## Project Structure
+```
 pm_tool/
 ├── backend/
 │   ├── app/
-│   │   ├── main.py              # FastAPI entry point
-│   │   ├── config.py            # Settings
-│   │   ├── database.py          # DB connection
-│   │   ├── models.py            # SQLAlchemy models
-│   │   ├── llm_service.py       # Ollama integration
-│   │   ├── document_processor.py # Doc parsing & LLM extraction
-│   │   ├── notification_service.py # Briefing generation
+│   │   ├── main.py              # FastAPI entry; settings imported as settings_router (alias)
+│   │   ├── config.py            # pydantic-settings + read_app_config/write_app_config
+│   │   ├── database.py          # SQLite engine, WAL, FK enforcement
+│   │   ├── models.py            # 8 SQLAlchemy models
+│   │   ├── llm_service.py       # OllamaService — extract/chat/reason, status_report()
+│   │   ├── document_processor.py # extract_text(), extract_with_type(), _excel_to_markdown()
+│   │   ├── notification_service.py # generate_daily_briefing()
+│   │   ├── scheduler.py         # APScheduler cron
 │   │   └── routers/
-│   │       ├── documents.py     # Upload endpoints
-│   │       ├── query.py         # Q&A chat
-│   │       ├── notifications.py # Briefing endpoints
-│   │       └── data.py          # CRUD for actions/risks/etc.
+│   │       ├── documents.py     # /documents — upload, batch-upload, intake-folder scan/process
+│   │       ├── settings.py      # /settings — document-types CRUD, ollama test, intake-folder
+│   │       ├── query.py         # /query — dual-path Q&A
+│   │       ├── notifications.py # /notifications — CRUD + refresh
+│   │       ├── data.py          # /actions, /risks, /deadlines, /dependencies, /scope-items
+│   │       └── llm.py           # /llm/status, /llm/generate
+│   ├── config/
+│   │   └── settings.json        # Mutable runtime config (intake_folder_path) — gitignored
 │   ├── data/
-│   │   ├── project.db           # SQLite database
-│   │   └── uploads/             # Uploaded files
-│   ├── requirements.txt
-│   └── .env
-├── frontend/
-│   ├── src/
-│   │   ├── App.tsx
-│   │   ├── components/
-│   │   ├── lib/api.ts           # Backend API client
-│   │   └── types/
-│   └── src-tauri/
-├── scripts/                     # PowerShell management scripts
+│   │   ├── project.db           # SQLite database — gitignored
+│   │   └── uploads/             # Uploaded + moved intake files — gitignored
+│   ├── migrate_document_types.py # One-time migration (already run — do not re-run)
+│   └── requirements.txt
+├── frontend/src/
+│   ├── types/index.ts           # All TS interfaces
+│   ├── lib/
+│   │   ├── api.ts               # Full typed API client
+│   │   └── utils.ts
+│   └── components/
+│       ├── ui/                  # Badge, Button, Card, Pagination, Toast
+│       ├── Sidebar.tsx          # Nav + Settings gear (bottom)
+│       ├── UploadPanel.tsx      # Batch drag-drop + intake folder queue
+│       ├── SettingsPage.tsx     # 4-tab settings UI
+│       ├── ChatInterface.tsx
+│       ├── NotificationPanel.tsx
+│       ├── ActionsTable.tsx     # All 5 tables have 50/page pagination
+│       ├── RisksTable.tsx
+│       ├── DeadlinesTable.tsx
+│       ├── DependenciesTable.tsx
+│       └── ScopeTable.tsx
+├── scripts/
+│   ├── start_all.ps1            # Open backend + frontend in separate windows
 │   ├── start_backend.ps1
-│   ├── stop_backend.ps1
-│   ├── start_frontend.ps1
-│   ├── reset_data.ps1
-│   ├── status.ps1
+│   ├── status.ps1               # Shows DB counts including doc_types
 │   ├── backup_data.ps1
-│   └── after_reboot.ps1
-├── tests/                       # Python test scripts
-│   ├── test_data/
-│   │   ├── meeting_notes_simple.md
-│   │   └── sample_email.txt
-│   ├── test_single_upload.py
-│   ├── test_notifications.py
-│   ├── test_chat.py
-│   └── test_crud.py
+│   └── reset_data.ps1
+├── tests/
+│   ├── create_test_data.py      # Generates xlsx/docx/pdf test files
+│   └── test_batch_upload.py     # 26/26 integration tests (stdlib only)
 └── docs/
-
-## Recent Changes Just Made
-
-### Pagination Added to All Data Tables
-Pagination (50 items per page) is now implemented in **all 5 data tables**:
-- Actions table
-- Risks table
-- Deadlines table
-- Dependencies table
-- Scope Items table
-
-**Reason:** App works great now with 2-10 items, but will slow down significantly after 500+ items per table. Pagination ensures it scales to handle a year-long project with daily uploads (~1,250 actions, ~750 risks after 12 months).
-
-**Implementation:** Client-side pagination via shared `Pagination` component (`frontend/src/components/ui/pagination.tsx`). Backend still returns full datasets — server-side `limit`/`offset` is a future optimization.
-
-## Known Limitations (Pre-Pagination)
-
-### Performance Thresholds
-| Data Volume | Status | Symptoms |
-|-------------|--------|----------|
-| 0-500 items | ✅ Perfect | No issues |
-| 500-1,000 items | ⚠️ Noticeable | UI lag, slow filtering |
-| 1,000-2,000 items | ❌ Problematic | Unusable tables, 5-10s load times |
-| 2,000+ items | ❌ Broken | Browser freeze, crashes |
-
-### What Causes Issues
-1. **Frontend renders ALL items at once** (no virtual scrolling)
-2. **React re-renders entire list** on filter changes
-3. **Large JSON payloads** from backend to frontend
-4. **No database query optimization** (full table scans)
-
-### Pagination Should Fix
-- Limits frontend to 50 items rendered at once
-- Reduces memory usage
-- Faster filtering and sorting
-- Scales to unlimited data
-
-## Testing After Pagination Changes
-
-### Test Plan
-1. **Basic functionality:**
-   - Upload `tests/test_data/meeting_notes_simple.md`
-   - Verify 2 actions appear in Actions table
-   - Check pagination controls exist (should show "Page 1 of 1")
-
-2. **Pagination controls:**
-   - Verify "Previous" and "Next" buttons present
-   - Verify page number display
-   - Test navigation if >50 items exist
-
-3. **Data integrity:**
-   - Ensure all actions still visible across pages
-   - Verify filters work with pagination
-   - Check "Mark as done" works on paginated items
-
-4. **Performance:**
-   - Load time for Actions table should be <1 second
-   - Filtering should be instant
-   - Pagination navigation should be smooth
-
-### Expected UI Changes
-**Before:**
-Actions (2)
-[Filters]
-[All 2 actions listed]
-
-**After:**
-Actions (2)
-[Filters]
-[Items 1-2 of 2]
-[All 2 actions listed]
-[< Prev] [Page 1 of 1] [Next >]
-
-## Startup Instructions (For Reference)
-
-### Start Backend
-```powershell
-cd C:\repos\pm_tool
-.\scripts\start_backend.ps1
 ```
 
-### Start Frontend
+## Database Schema (8 tables)
+```sql
+document_types: id, name, extraction_prompt, target_model, is_system, created_at
+documents:      id, filename, doc_type (legacy), document_type_id(FK), upload_date, content_text
+actions:        id, description, owner, due_date, status, priority, created_from_doc_id
+risks:          id, description, impact, likelihood, mitigation, status
+deadlines:      id, description, deadline_date, met, source_doc_id
+dependencies:   id, task_a, task_b, dependency_type (blocks/enables/relates_to), notes
+scope_items:    id, description, source, approved, impact_assessment, added_date
+notifications:  id, type, message, severity, read, created_at, related_id, related_type
+```
+
+## Critical Technical Notes
+
+### Import alias — NEVER remove
+```python
+# backend/app/main.py
+from app.routers import settings as settings_router
+```
+`settings = get_settings()` is defined at module level. Importing the router module without the alias overwrites it → 500 errors on every request.
+
+### Intake folder pattern
+- Path stored in `backend/config/settings.json` via `read_app_config()`/`write_app_config()`
+- Frontend sends file paths as JSON (not file bytes) — backend reads files from disk
+- Security: backend validates each path is inside configured intake folder before reading
+- On success: `shutil.move()` to `uploads/` with `_unique_dest()` (timestamp-based dedup)
+- Frontend uses `new File([], filename)` as display stub (no real bytes needed in browser)
+
+### Model name resolution
+Ollama returns `"mistral-nemo:latest"` but DocumentType stores `"mistral-nemo"`.
+`extract_with_type()` resolves: exact match → prefix match → fallback to service default.
+
+### pydantic Settings fields
+Use `llm_*` prefix (not `model_*`) — `model_` is a protected namespace in pydantic v2.
+
+## Startup Commands
 ```powershell
+# Option A: separate terminals
+cd C:\repos\pm_tool\backend
+.venv\Scripts\uvicorn app.main:app --reload
+
 cd C:\repos\pm_tool\frontend
-$env:PATH += ";$env:USERPROFILE\.cargo\bin"
 npm run tauri dev
+
+# Option B: script (opens both in separate windows)
+.\scripts\start_all.ps1
+
+# Run integration tests (all 26 should pass)
+cd C:\repos\pm_tool\tests
+python test_batch_upload.py
 ```
 
-### Check Status
-```powershell
-cd C:\repos\pm_tool
-.\scripts\status.ps1
-```
-
-## API Endpoints (For Reference)
+## API Endpoints Summary
 
 **Documents:**
-- POST `/documents/upload` - Upload and process document
-- GET `/documents` - List all documents
+- `POST /documents/upload` — legacy single-file upload
+- `GET /documents` — list all; `DELETE /documents/{id}`
+- `POST /documents/batch-upload` — multi-file FormData, sequential
+- `GET /documents/intake-folder/scan` — list files in intake folder
+- `POST /documents/batch-upload-intake` — process + move intake files (JSON paths)
 
-**Actions:**
-- GET `/actions` - List all actions
-- POST `/actions` - Create action
-- PATCH `/actions/{id}` - Update action (mark done, etc.)
-- DELETE `/actions/{id}` - Delete action
+**Settings:**
+- `GET/POST /settings/document-types` — list/create types
+- `PATCH/DELETE /settings/document-types/{id}` — update/delete (system types protected)
+- `GET/POST/DELETE /settings/intake-folder` — get/set/clear intake folder path
+- `GET /settings/ollama/models` — list Ollama models
+- `POST /settings/ollama/test` — test connection (never raises)
 
-**Risks, Deadlines, Dependencies:** Similar CRUD patterns
+**Data CRUD:** `/actions`, `/risks`, `/deadlines`, `/dependencies`, `/scope-items` — GET/POST/PATCH/DELETE
 
-**Notifications:**
-- GET `/notifications` - Get briefing
-- POST `/notifications/refresh` - Regenerate briefing
-- PATCH `/notifications/{id}` - Mark as read
+**Other:** `POST /query`, `GET /notifications`, `POST /notifications/refresh`, `GET /llm/status`
 
-**Q&A:**
-- POST `/query` - Ask question, get AI answer
+## What Was Built (Session History)
 
-## What I Need Help With
+### Intake Folder Feature (2026-04-06)
+- `GET/POST/DELETE /settings/intake-folder` endpoints in settings.py
+- `GET /documents/intake-folder/scan` — reads config, lists matching files, returns `{configured, path, files[], error?}`
+- `POST /documents/batch-upload-intake` — validates path inside intake folder, reads+moves file, calls `extract_with_type()`
+- `read_app_config()`/`write_app_config()` helpers in config.py using `backend/config/settings.json`
+- SettingsPage: Folders tab — path input, save/clear/scan buttons, inline scan results
+- UploadPanel: "Load from Intake Folder" button, `fromIntakePath` on QueueEntry, `processAll()` splits batch into intake-JSON + browser-FormData paths
 
-### Completed in Batch Upload Session
-- `POST /documents/batch-upload` endpoint (sequential, per-file success/error)
-- Excel support: `.xlsx` → markdown table via openpyxl (first sheet, values only)
-- `extract_with_type()` — loads prompt + model from DocumentType DB row
-- `EXTRACTION_PROMPT` kept as legacy fallback for old single-file endpoint only
-- Frontend batch upload: `uploadBatch()`, `BatchUploadResult` type, UploadPanel wired to real API
-- Drag-and-drop fixed: added `onDragEnter`, stable `useCallback` handlers, child-element flicker fix via `relatedTarget` check
-- `tests/create_test_data.py` — generates raid_example.xlsx, meeting_notes.docx, budget_overview.pdf
-- `tests/test_batch_upload.py` — 8 integration test suites, stdlib only, no pytest required
-- `docs/BATCH_UPLOAD.md` — full feature documentation
-- `README.md` — written from scratch with full project overview
-- `scripts/status.ps1` — adds document_types count (system vs custom) and last-24h upload count
+### Batch Upload + Document Types (2026-04-05)
+- `DocumentType` model (8th table), `document_type_id` FK on `Document`
+- Migration script `migrate_document_types.py` — seeds 5 system types, already run
+- `extract_with_type()` — loads per-type prompt+model from DB
+- `_excel_to_markdown()` — openpyxl first-sheet to markdown table
+- `POST /documents/batch-upload` — sequential multi-file with per-file results
+- Settings API router (document types CRUD + Ollama test)
+- SettingsPage with 4 tabs: Document Types, Folders, LLM Configuration, About
+- UploadPanel rewrite: drag-drop fixed (relatedTarget check), multi-file queue, type selector
+- `tests/create_test_data.py` + `tests/test_batch_upload.py` (26/26)
 
-### Completed in Earlier Sessions
-- Pagination added to DependenciesTable and ScopeTable (was missing from these two)
-- All 5 data tables now have consistent 50-items/page pagination
-- `DocumentType` model added to models.py; `document_type_id` FK added to `Document`
-- Migration script `backend/migrate_document_types.py` run successfully — 5 system types seeded
-- Settings API router `backend/app/routers/settings.py` created (6 endpoints)
-- Settings UI built: `frontend/src/components/SettingsPage.tsx` with 3 tabs:
-  - Document Types tab: CRUD for custom types, expandable rows, create/edit modal
-  - LLM Configuration tab: Ollama connection test + model list
-  - About tab: placeholder
+### Earlier Sessions
+- All 5 data tables with 50/page pagination (shared Pagination component)
+- Full CRUD for all entity types
+- Daily briefing (APScheduler), notifications panel
+- Q&A chat (dual-path: structured DB / LLM), deep reasoning toggle, citations
+- Sidebar: Ollama status dot, unread notification badge, Settings gear at bottom
 
-### Integration Test Results (2026-04-05)
-All 26/26 tests passing. Batch upload extracted from real files:
-- +9 actions, +5 risks, +3 deadlines, +2 dependencies across xlsx/docx/pdf
+## Design Principles — Never Violate
+- **GDPR Compliance:** All data local, no external API calls with user data
+- **No Cloud LLMs:** Ollama on localhost:11434 only
+- **No Emojis in PowerShell Scripts:** Encoding issues on Windows — use `[OK]`, `[ERROR]`
+- **Pagination always:** 50 items/page on all 5 data tables
+- **Structured extraction over RAG:** LLM populates DB tables
 
-### Next Requests (Future)
-1. **Wire document_type_id into upload flow** — user picks type at upload; processor uses its prompt/model
-2. **Add date range filters** (Last 30/90/365 days) to complement pagination
-3. **Archive old completed items** (auto-archive tasks completed >6 months ago)
-4. **Optimize notification generation** (currently scans all items every time)
-5. **Add vector search for chat** (better context retrieval for Q&A)
-6. **Server-side pagination** (add `limit`/`offset` to backend endpoints for very large datasets)
-
-## Design Principles
-
-**CRITICAL - Never Violate:**
-- **GDPR Compliance:** All data stays local, no external API calls with user data
-- **Privacy First:** Ollama runs on localhost:11434, no cloud LLMs
-- **Single Project Focus:** One instance = one project (simplified architecture)
-- **No Emojis in PowerShell Scripts:** Causes encoding issues on Windows
-- **Emoji-free zones:** All .ps1 files, use text indicators like [OK], [ERROR], [INFO] instead
-
-**Preferred Patterns:**
-- Structured data extraction over RAG (LLM populates DB tables)
-- Pagination over infinite scroll
-- Server-side filtering over client-side
-- Plain text outputs for email/PowerPoint (copy-paste friendly)
-
-## Test Data
-
-### Sample Document (meeting_notes_simple.md)
-```markdown
-# Meeting Notes - April 3, 2025
-
-## Actions
-- Alan to review vendor proposal by April 10 (HIGH priority)
-- Team lead to approve budget by April 5
-
-## Risks
-- Vendor might delay delivery (HIGH impact, MEDIUM likelihood)
-- Budget approval could slip (MEDIUM impact, LOW likelihood)
-
-## Deadlines
-- Project kickoff: April 15, 2025
-- First milestone: May 1, 2025
-
-## Dependencies
-- Budget approval blocks vendor contract
-- Vendor contract enables project kickoff
-```
-
-## Success Criteria
-
-App is working correctly if:
-- ✅ Can upload documents via drag-and-drop
-- ✅ LLM extracts actions, risks, deadlines automatically
-- ✅ Daily briefing shows overdue/upcoming items
-- ✅ Chat answers questions about project intelligently
-- ✅ Data tables display with pagination (50 items/page) — all 5 tables
-- ✅ CRUD operations work (mark complete, delete, edit)
-- ✅ All data persists across app restarts
-- ✅ No performance issues with current data volume
+## What's Next (Future Roadmap)
+1. **Date range filters** — Last 30/90/365 days to complement pagination
+2. **Archive completed items** — Auto-archive tasks done >6 months ago
+3. **Server-side pagination** — Add `limit`/`offset` to backend for very large datasets
+4. **Vector search for chat** — Better context retrieval for Q&A
+5. **Optimize notification generation** — Don't rescan everything every refresh
+6. **SQLite encryption** — Deferred to Phase 2 (GDPR hardening)
 
 ## Platform
 - **OS:** Windows 11
-- **Python:** 3.11+ (venv at `backend/.venv`)
-- **Node.js:** 16+
-- **Rust:** 1.94.1 (for Tauri compilation)
+- **Python:** 3.13 (venv at `backend/.venv`) — SQLAlchemy pinned to 2.0.36
+- **Node.js:** 18+
+- **Rust:** Latest stable (for Tauri compilation — first run ~5min)
 - **Ollama:** Latest, running as service
 
-## Questions to Answer
+## Success Criteria
+App is working correctly if:
+- ✅ Batch upload (drag-drop) extracts actions/risks/deadlines from PDF/DOCX/XLSX/TXT
+- ✅ Intake folder: scan shows pending files, Process All moves them and extracts
+- ✅ Settings: custom document types can be created, edited, deleted
+- ✅ LLM status shows Ollama connected with available models
+- ✅ All 5 data tables show with pagination controls
+- ✅ Daily briefing shows overdue/upcoming items
+- ✅ Chat answers questions about project with citations
+- ✅ All 26 integration tests pass: `python tests/test_batch_upload.py`
+- ✅ No data leaves localhost
 
-1. **Pagination is confirmed in all 5 tables** (Actions, Risks, Deadlines, Dependencies, Scope Items)
-2. **Previous/Next navigation controls** are present via the shared `Pagination` component
-3. **Total item count** shown in header (`Dependencies (12)`) and in paginator (`1–50 of 120`)
-4. **No "items per page" selector** — fixed at 50/page by design
-5. **Pagination hides itself** when total ≤ 50 items (clean UX for small datasets)
-
----
-
-## Next Steps After Pagination Verified
-
-If pagination works:
-1. Test with larger dataset (create script to generate 100 test actions)
-2. Add date range filters to reduce noise
-3. Implement smart archiving for old completed items
-
-If pagination has issues:
-1. Debug specific component causing problems
-2. Verify backend supports limit/offset parameters
-3. Check if database queries are indexed properly
-
----
-
-**Timeline Context:**
-This is a working production app built in a single session. All core features functional. Pagination is a scaling improvement to handle 12 months of daily uploads without performance degradation.
-
-**Primary Goal:**
-Verify pagination implementation is correct and functional before moving to real-world testing with actual project documents.
-
-## Security Hardening Applied
-
-### Recent Security Changes
-1. **CSP implemented** - `connect-src` limited to self + localhost:8000
-2. **CORS tightened** - Explicit methods (GET/POST/PATCH/DELETE only)
-3. **File paths sanitized** - No filesystem leaks in API responses
-4. **Input validation** - Questions truncated to 1000 chars
-5. **Environment variables** - Backend URL configurable via VITE_API_URL
-6. **.gitignore created** - Secrets, data, build artifacts excluded from git
-
-### Security Test Commands
-```powershell
-# Test CSP (in Tauri DevTools Console)
-fetch('https://google.com')  # Should fail
-
-# Test file path sanitization
-Invoke-RestMethod -Uri "http://localhost:8000/documents"  # No file_path field
-
-# Test question truncation
-# Paste 2000-char question in chat, should truncate to 1000
-```
-
-### Threat Model Protected Against
-- ✅ XSS (Cross-Site Scripting) - CSP blocks external scripts
-- ✅ Data exfiltration - CSP blocks external connections
-- ✅ Information disclosure - File paths removed from responses
-- ✅ DoS (Denial of Service) - Question length limits
-- ✅ CORS attacks - Strict origin + method restrictions
-- ✅ Credential leaks - .gitignore prevents .env commits
-
-### Not Protected Against (Requires Additional Work)
-- ❌ SQL injection - Using SQLAlchemy ORM (mitigates but not perfect)
-- ❌ File upload bombs - No size limits on uploaded documents
-- ❌ Malicious documents - No virus scanning
-- ❌ Brute force - No rate limiting on API endpoints
+## Security
+- CSP: `connect-src 'self' http://localhost:8000`
+- CORS: Methods locked to GET/POST/PATCH/DELETE
+- Intake folder: path validated against configured base dir before reading
+- No file_path in document API responses
+- `.gitignore`: backend/data/, backend/config/, .venv, node_modules/, target/

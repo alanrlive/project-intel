@@ -5,6 +5,7 @@ import type {
   Dependency,
   Document,
   DocumentType,
+  IntakeScanResult,
   LlmStatus,
   NotificationsResponse,
   OllamaTestResult,
@@ -196,6 +197,30 @@ export const api = {
 
   deleteDocumentType: (id: number) =>
     request<void>(`/settings/document-types/${id}`, { method: "DELETE" }),
+
+  // ── Intake folder ─────────────────────────────────────────────────────────
+  getIntakeFolder: () =>
+    request<{ path: string | null }>("/settings/intake-folder"),
+
+  setIntakeFolder: (path: string) =>
+    request<{ path: string }>("/settings/intake-folder", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    }),
+
+  clearIntakeFolder: () =>
+    request<void>("/settings/intake-folder", { method: "DELETE" }),
+
+  scanIntakeFolder: () =>
+    request<IntakeScanResult>("/documents/intake-folder/scan"),
+
+  uploadBatchIntake: (items: { path: string; type_id: number }[]) =>
+    request<BatchUploadResult[]>("/documents/batch-upload-intake", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(items),
+    }),
 
   // ── Batch upload ──────────────────────────────────────────────────────────
   uploadBatch: (files: File[], typeIds: number[]): Promise<BatchUploadResult[]> => {

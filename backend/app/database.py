@@ -41,7 +41,97 @@ def get_db():
         db.close()
 
 
+_SYSTEM_TYPES = [
+    {
+        "name": "General",
+        "target_model": "mistral-nemo",
+        "extraction_prompt": (
+            "Extract all relevant project management information from this document. "
+            "Return a JSON object with these arrays (omit any array that has no items):\n"
+            '- "actions": [{"description": str, "owner": str|null, "due_date": "YYYY-MM-DD"|null, "priority": "high"|"medium"|"low"}]\n'
+            '- "risks": [{"description": str, "impact": "high"|"medium"|"low", "likelihood": "high"|"medium"|"low", "mitigation": str|null}]\n'
+            '- "deadlines": [{"description": str, "deadline_date": "YYYY-MM-DD"}]\n'
+            '- "dependencies": [{"task_a": str, "dependency_type": "blocks"|"enables"|"relates_to", "task_b": str, "notes": str|null}]\n'
+            '- "scope_items": [{"description": str, "source": "change_request"|"original_plan"|"meeting", "impact_assessment": str|null}]\n'
+            "Return only valid JSON, no explanation or markdown."
+        ),
+    },
+    {
+        "name": "RAID Log",
+        "target_model": "mistral-nemo",
+        "extraction_prompt": (
+            "Extract all RAID items from this document. "
+            "Return a JSON object with these arrays (omit any that have no items):\n"
+            '- "risks": [{"description": str, "impact": "high"|"medium"|"low", "likelihood": "high"|"medium"|"low", "mitigation": str|null}]\n'
+            '- "actions": [{"description": str, "owner": str|null, "due_date": "YYYY-MM-DD"|null, "priority": "high"|"medium"|"low"}]\n'
+            '- "dependencies": [{"task_a": str, "dependency_type": "blocks"|"enables"|"relates_to", "task_b": str, "notes": str|null}]\n'
+            "Assumptions and issues should be mapped to actions where an owner or due date is present, "
+            "otherwise to risks. Return only valid JSON, no explanation or markdown."
+        ),
+    },
+    {
+        "name": "Task List",
+        "target_model": "mistral-nemo",
+        "extraction_prompt": (
+            "Extract all tasks, action items, and deadlines from this document. "
+            "Return a JSON object with:\n"
+            '- "actions": [{"description": str, "owner": str|null, "due_date": "YYYY-MM-DD"|null, "priority": "high"|"medium"|"low"}]\n'
+            '- "deadlines": [{"description": str, "deadline_date": "YYYY-MM-DD"}]\n'
+            "Infer priority from language (urgent/critical = high, soon/shortly = medium, eventually = low). "
+            "Return only valid JSON, no explanation or markdown."
+        ),
+    },
+    {
+        "name": "Project Plan",
+        "target_model": "llama3.1",
+        "extraction_prompt": (
+            "Extract all project planning information from this document. "
+            "Return a JSON object with:\n"
+            '- "actions": [{"description": str, "owner": str|null, "due_date": "YYYY-MM-DD"|null, "priority": "high"|"medium"|"low"}]\n'
+            '- "deadlines": [{"description": str, "deadline_date": "YYYY-MM-DD"}]\n'
+            '- "dependencies": [{"task_a": str, "dependency_type": "blocks"|"enables"|"relates_to", "task_b": str, "notes": str|null}]\n'
+            '- "risks": [{"description": str, "impact": "high"|"medium"|"low", "likelihood": "high"|"medium"|"low", "mitigation": str|null}]\n'
+            '- "scope_items": [{"description": str, "source": "original_plan"|"change_request"|"meeting", "impact_assessment": str|null}]\n'
+            "Return only valid JSON, no explanation or markdown."
+        ),
+    },
+    {
+        "name": "Financial Data",
+        "target_model": "deepseek-r1",
+        "extraction_prompt": (
+            "Extract all financially relevant project management information from this document. "
+            "Return a JSON object with:\n"
+            '- "risks": [{"description": str, "impact": "high"|"medium"|"low", "likelihood": "high"|"medium"|"low", "mitigation": str|null}]\n'
+            '- "actions": [{"description": str, "owner": str|null, "due_date": "YYYY-MM-DD"|null, "priority": "high"|"medium"|"low"}]\n'
+            '- "scope_items": [{"description": str, "source": "change_request"|"original_plan"|"meeting", "impact_assessment": str|null}]\n'
+            "Focus on budget overruns, cost risks, approval actions, and scope changes with financial impact. "
+            "Return only valid JSON, no explanation or markdown."
+        ),
+    },
+]
+
+
 def init_db():
-    """Create all tables. Called once at startup."""
+    """Create all tables and seed system document types. Called once at startup."""
     from app import models  # noqa: F401 — import triggers table registration
     Base.metadata.create_all(bind=engine)
+    _seed_system_types()
+
+
+def _seed_system_types():
+    """Insert the 5 built-in document types if they don't exist yet. Idempotent."""
+    from app.models import DocumentType  # local import to avoid circular deps
+    db = SessionLocal()
+    try:
+        for dt in _SYSTEM_TYPES:
+            exists = db.query(DocumentType).filter(DocumentType.name == dt["name"]).first()
+            if not exists:
+                db.add(DocumentType(
+                    name=dt["name"],
+                    extraction_prompt=dt["extraction_prompt"],
+                    target_model=dt["target_model"],
+                    is_system=True,
+                ))
+        db.commit()
+    finally:
+        db.close()

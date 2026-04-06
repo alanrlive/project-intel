@@ -102,6 +102,19 @@ export interface QueryResponse {
   answered_directly: boolean;
 }
 
+export interface IntakeFile {
+  filename: string;
+  size_bytes: number;
+  path: string;
+}
+
+export interface IntakeScanResult {
+  configured: boolean;
+  path: string | null;
+  files: IntakeFile[];
+  error?: string;
+}
+
 export interface BatchUploadResult {
   filename: string;
   success: boolean;

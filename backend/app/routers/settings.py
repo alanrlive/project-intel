@@ -1,15 +1,17 @@
 """
-Settings endpoints for managing document types and Ollama configuration.
+Settings endpoints for managing document types, Ollama configuration,
+and the intake folder path.
 """
 
 from typing import Annotated
+from pathlib import Path
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.config import get_settings
+from app.config import get_settings, read_app_config, write_app_config
 from app.database import get_db
 from app.models import Document, DocumentType
 
@@ -134,6 +136,50 @@ def delete_document_type(type_id: int, db: Session = Depends(get_db)):
 
     db.delete(dt)
     db.commit()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Intake folder endpoints
+# ══════════════════════════════════════════════════════════════════════════════
+
+class IntakeFolderSet(BaseModel):
+    path: str = Field(..., min_length=1, max_length=500)
+
+
+@router.get("/intake-folder", tags=["settings"])
+def get_intake_folder():
+    """Return the currently configured intake folder path (or null)."""
+    cfg = read_app_config()
+    return {"path": cfg.get("intake_folder_path")}
+
+
+@router.post("/intake-folder", tags=["settings"])
+def set_intake_folder(body: IntakeFolderSet):
+    """
+    Set the intake folder path. Validates the directory exists and is readable.
+    """
+    p = Path(body.path)
+    if not p.exists():
+        raise HTTPException(status_code=400, detail=f"Path does not exist: {body.path}")
+    if not p.is_dir():
+        raise HTTPException(status_code=400, detail=f"Path is not a directory: {body.path}")
+    try:
+        list(p.iterdir())  # test read permission
+    except PermissionError:
+        raise HTTPException(status_code=403, detail=f"No read permission on: {body.path}")
+
+    cfg = read_app_config()
+    cfg["intake_folder_path"] = str(p.resolve())
+    write_app_config(cfg)
+    return {"path": str(p.resolve())}
+
+
+@router.delete("/intake-folder", status_code=204, tags=["settings"])
+def clear_intake_folder():
+    """Remove the intake folder configuration."""
+    cfg = read_app_config()
+    cfg.pop("intake_folder_path", None)
+    write_app_config(cfg)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

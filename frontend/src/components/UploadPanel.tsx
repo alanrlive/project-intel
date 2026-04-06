@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Upload, FileText, CheckCircle, AlertCircle, Loader2, X,
-  ChevronRight, RotateCcw,
+  ChevronRight, RotateCcw, FolderInput,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import type { BatchUploadResult, DocumentType } from "@/types";
@@ -22,10 +22,11 @@ const ACCEPTED_ATTR = ACCEPTED_EXT.join(",");
 type FileStatus = "queued" | "processing" | "success" | "error";
 
 interface QueueEntry {
-  id: string;          // stable key (random)
+  id: string;              // stable key (random)
   file: File;
   typeId: number;
   status: FileStatus;
+  fromIntakePath?: string; // set for files loaded from intake folder
   result?: BatchUploadResult;
   error?: string;
 }
@@ -41,7 +42,8 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function guessTypeId(filename: string, types: DocumentType[], generalId: number): number {
+function guessTypeId(filename: string, types: DocumentType[], generalId: number | null): number | null {
+  if (generalId === null) return null;
   const lower = filename.toLowerCase();
   const find = (keywords: string[]) =>
     keywords.some((k) => lower.includes(k));
@@ -80,33 +82,43 @@ function StatusIcon({ status }: { status: FileStatus }) {
 
 export function UploadPanel({ onNavigate }: Props) {
   const [docTypes, setDocTypes] = useState<DocumentType[]>([]);
-  const [generalId, setGeneralId] = useState<number>(0);
+  const [generalId, setGeneralId] = useState<number | null>(null); // null = not yet loaded
   const [entries, setEntries] = useState<QueueEntry[]>([]);
   const [dragging, setDragging] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [done, setDone] = useState(false);
+  const [intakePath, setIntakePath] = useState<string | null>(null);
+  const [loadingIntake, setLoadingIntake] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Load document types once
+  // Load document types + intake folder path on mount
   useEffect(() => {
     api.listDocumentTypes()
       .then((types) => {
         setDocTypes(types);
         const general = types.find((t) => t.name === "General");
-        if (general) setGeneralId(general.id);
+        setGeneralId(general?.id ?? (types[0]?.id ?? null));
       })
       .catch(() => toast("Could not load document types", "error"));
+
+    api.getIntakeFolder()
+      .then((r) => setIntakePath(r.path ?? null))
+      .catch(() => {});
   }, []);
 
   // ── File ingestion ──────────────────────────────────────────────────────────
 
   const addFiles = useCallback((files: FileList | File[]) => {
+    if (generalId === null) {
+      toast("Document types still loading — please wait a moment", "error");
+      return;
+    }
     const next: QueueEntry[] = Array.from(files)
       .filter((f) => ACCEPTED_EXT.some((ext) => f.name.toLowerCase().endsWith(ext)))
       .map((f) => ({
         id: uid(),
         file: f,
-        typeId: guessTypeId(f.name, docTypes, generalId),
+        typeId: guessTypeId(f.name, docTypes, generalId) ?? generalId,
         status: "queued" as FileStatus,
       }));
 
@@ -117,6 +129,50 @@ export function UploadPanel({ onNavigate }: Props) {
     setEntries((prev) => [...prev, ...next]);
     setDone(false);
   }, [docTypes, generalId]);
+
+  const loadFromIntake = async () => {
+    if (generalId === null) {
+      toast("Document types still loading — please wait a moment", "error");
+      return;
+    }
+    setLoadingIntake(true);
+    try {
+      const result = await api.scanIntakeFolder();
+      if (result.error) {
+        toast(result.error, "error");
+        return;
+      }
+      if (!result.files.length) {
+        toast("No supported files found in intake folder", "info");
+        return;
+      }
+      // Create queue entries for intake files — they have no File object yet;
+      // we store the path and use a synthetic File-like wrapper for display.
+      const next: QueueEntry[] = result.files.map((f) => ({
+        id: uid(),
+        // Synthetic File for display (size/name only — bytes not loaded into browser)
+        file: new File([], f.filename, { type: "application/octet-stream" }) as File & { size: number },
+        typeId: guessTypeId(f.filename, docTypes, generalId) ?? generalId,
+        status: "queued" as FileStatus,
+        fromIntakePath: f.path,
+      }));
+      // Override size display using actual size from scan
+      result.files.forEach((f, i) => {
+        Object.defineProperty(next[i].file, "size", { value: f.size_bytes });
+      });
+      setEntries((prev) => [
+        // Keep manually browsed files; replace any previously loaded intake entries
+        ...prev.filter((e) => !e.fromIntakePath),
+        ...next,
+      ]);
+      setDone(false);
+      toast(`${next.length} file(s) loaded from intake folder`, "success");
+    } catch {
+      toast("Failed to scan intake folder", "error");
+    } finally {
+      setLoadingIntake(false);
+    }
+  };
 
   const onDragEnter = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -160,42 +216,61 @@ export function UploadPanel({ onNavigate }: Props) {
     setProcessing(true);
     const queued = entries.filter((e) => e.status === "queued");
 
-    // Mark all as processing immediately so the UI shows spinners
+    // Mark all queued as processing
     setEntries((prev) => prev.map((e) =>
       e.status === "queued" ? { ...e, status: "processing" } : e
     ));
 
-    try {
-      const results = await api.uploadBatch(
-        queued.map((e) => e.file),
-        queued.map((e) => e.typeId),
-      );
+    // Split into intake-folder files and browser-uploaded files
+    const intakeQueued  = queued.filter((e) => e.fromIntakePath);
+    const browserQueued = queued.filter((e) => !e.fromIntakePath);
 
-      // Map results back to entries by index (guaranteed same order)
-      setEntries((prev) => {
-        const updated = [...prev];
-        let ri = 0;
-        for (let i = 0; i < updated.length; i++) {
-          if (updated[i].status === "processing") {
-            const res = results[ri++];
-            updated[i] = {
-              ...updated[i],
-              status: res.success ? "success" : "error",
-              result: res,
-              error: res.error,
-            };
-          }
-        }
-        return updated;
-      });
-    } catch (err) {
-      // Whole-batch failure (network error, server crash)
-      const msg = err instanceof Error ? err.message : "Batch upload failed";
-      toast(msg, "error");
-      setEntries((prev) => prev.map((e) =>
-        e.status === "processing" ? { ...e, status: "error", error: msg } : e
-      ));
+    // Results map: entry.id -> BatchUploadResult
+    const resultMap = new Map<string, BatchUploadResult>();
+
+    // Process intake files (paths sent as JSON — backend reads from disk)
+    if (intakeQueued.length) {
+      try {
+        const res = await api.uploadBatchIntake(
+          intakeQueued.map((e) => ({ path: e.fromIntakePath!, type_id: e.typeId }))
+        );
+        intakeQueued.forEach((e, i) => resultMap.set(e.id, res[i]));
+        const moved = res.filter((r) => (r as BatchUploadResult & { moved?: boolean }).moved).length;
+        if (moved) toast(`${moved} file(s) moved from intake folder`, "info");
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Intake batch failed";
+        toast(msg, "error");
+        intakeQueued.forEach((e) => resultMap.set(e.id, { filename: e.file.name, success: false, error: msg }));
+      }
     }
+
+    // Process browser-uploaded files (bytes sent as FormData)
+    if (browserQueued.length) {
+      try {
+        const res = await api.uploadBatch(
+          browserQueued.map((e) => e.file),
+          browserQueued.map((e) => e.typeId),
+        );
+        browserQueued.forEach((e, i) => resultMap.set(e.id, res[i]));
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Batch upload failed";
+        toast(msg, "error");
+        browserQueued.forEach((e) => resultMap.set(e.id, { filename: e.file.name, success: false, error: msg }));
+      }
+    }
+
+    // Apply results back to entries
+    setEntries((prev) => prev.map((e) => {
+      if (e.status !== "processing") return e;
+      const res = resultMap.get(e.id);
+      if (!res) return { ...e, status: "error" as FileStatus, error: "No result returned" };
+      return {
+        ...e,
+        status: res.success ? "success" as FileStatus : "error" as FileStatus,
+        result: res,
+        error: res.error,
+      };
+    }));
 
     setProcessing(false);
     setDone(true);
@@ -245,11 +320,35 @@ export function UploadPanel({ onNavigate }: Props) {
             </p>
           )}
         </div>
-        {done && (
-          <Button size="sm" variant="ghost" onClick={resetQueue}>
-            <RotateCcw size={13} /> Upload More
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={loadFromIntake}
+            disabled={!intakePath || loadingIntake || processing || generalId === null}
+            title={
+              !intakePath
+                ? "Configure intake folder in Settings → Folders"
+                : generalId === null
+                ? "Loading document types…"
+                : "Load files from intake folder"
+            }
+            className={cn(
+              "flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded border transition-colors",
+              intakePath && !processing && generalId !== null
+                ? "border-zinc-600 text-zinc-300 hover:border-zinc-400 hover:text-zinc-100 cursor-pointer"
+                : "border-zinc-700 text-zinc-600 cursor-not-allowed"
+            )}
+          >
+            {loadingIntake
+              ? <Loader2 size={12} className="animate-spin" />
+              : <FolderInput size={12} />}
+            Load from Intake Folder
+          </button>
+          {done && (
+            <Button size="sm" variant="ghost" onClick={resetQueue}>
+              <RotateCcw size={13} /> Upload More
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Drop zone — hidden while actively processing */}
