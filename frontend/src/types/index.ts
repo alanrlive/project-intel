@@ -149,26 +149,24 @@ export interface OllamaTestResult {
 export interface RoleAssignment {
   model: string;
   context: number;
+  system_prompt: string;
+  timeout: number;
 }
 
 export interface ModelAssignments {
   extraction: RoleAssignment;
-  qa: RoleAssignment;
-  reasoning: RoleAssignment;
+  general:    RoleAssignment;
+  reasoning:  RoleAssignment;
 }
 
 export interface LlmStatus {
   ollama_running: boolean;
   ollama_url: string;
   models_available: string[];
-  configured_models: {
-    extraction: string;
-    qa: string;
-    reasoning: string;
-  };
+  configured_models: ModelAssignments;
   models_ready: {
     extraction: boolean;
-    qa: boolean;
+    general: boolean;
     reasoning: boolean;
   };
   missing_models?: string[];

@@ -187,6 +187,9 @@ export function DeadlinesTable() {
                     <td className="py-2.5 pr-4 whitespace-nowrap">
                       <span className={!d.met && due.urgent ? "text-red-400" : "text-zinc-400"}>
                         {due.label}
+                        {due.date && (
+                          <span className="block text-xs text-zinc-500">{due.date}</span>
+                        )}
                       </span>
                     </td>
                     <td className="py-2.5 pr-4">

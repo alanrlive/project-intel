@@ -47,15 +47,18 @@ _SYSTEM_TYPES = [
         "target_model": "mistral-nemo",
         "extraction_prompt": (
             'Extract project management data as JSON (omit empty arrays):\n'
-            '- "actions": [{"description": str, "owner": str|null, "due_date": "YYYY-MM-DD"|null, "priority": "high"|"medium"|"low"}]\n'
-            '- "risks": [{"description": str, "impact": "high"|"medium"|"low", "likelihood": "high"|"medium"|"low", "mitigation": str|null}]\n'
-            '- "deadlines": [{"description": str, "deadline_date": "YYYY-MM-DD"}]\n'
+            '- "actions": [{"description": str, "owner": str|null, "due_date": "YYYY-MM-DD"|null, "priority": "high"|"medium"|"low", "status": "open"|"done"|"cancelled"}]\n'
+            '- "risks": [{"description": str, "impact": "high"|"medium"|"low", "likelihood": "high"|"medium"|"low", "mitigation": str|null, "status": "open"|"closed"}]\n'
+            '- "deadlines": [{"description": str, "deadline_date": "YYYY-MM-DD", "met": true|false}]\n'
             '- "dependencies": [{"task_a": str, "dependency_type": "blocks"|"enables"|"relates_to", "task_b": str}]\n'
             '- "scope_items": [{"description": str, "source": "deferred"|"change_request"|"original"|"meeting"}]\n'
             "\n"
-            "Scope items: future features, ideas marked DEFERRED/V3/OUT OF SCOPE, phrases like \"it would be cool if\".\n"
-            "Dependencies: \"A blocks B\" = A must finish first. Check all sheets/sections.\n"
-            "Dates: use task dates, not file metadata. Assume current/next year if ambiguous.\n"
+            'STATUS: Actions COMPLETED/DONE/FINISHED/CLOSED="done". CANCELLED/DEFERRED/OUT OF SCOPE="cancelled". Otherwise="open". '
+            'Risks RESOLVED/CLOSED/MITIGATED="closed". Deadlines MET/ACHIEVED/DELIVERED=true. '
+            'Check narrative: "we finally finished X", "X is behind us", "X no longer a problem".\n'
+            'Scope items: future features, DEFERRED/V3/OUT OF SCOPE, "it would be cool if".\n'
+            'Dependencies: "A blocks B" = A must finish before B starts. A is prerequisite.\n'
+            "Dates: use task dates, not file metadata.\n"
             "JSON only, no markdown."
         ),
     },
@@ -63,19 +66,18 @@ _SYSTEM_TYPES = [
         "name": "RAID Log",
         "target_model": "mistral-nemo",
         "extraction_prompt": (
-            "Extract all RAID items from this document including from ALL sheets/tabs if spreadsheet. "
-            "Return a JSON object with these arrays (omit any that have no items):\n"
-            '- "risks": [{"description": str, "impact": "high"|"medium"|"low", "likelihood": "high"|"medium"|"low", "mitigation": str|null}]\n'
-            '- "actions": [{"description": str, "owner": str|null, "due_date": "YYYY-MM-DD"|null, "priority": "high"|"medium"|"low"}]\n'
-            '- "dependencies": [{"task_a": str, "dependency_type": "blocks"|"enables"|"relates_to", "task_b": str, "notes": str|null}]\n'
+            "Extract all RAID items from ALL sheets/tabs. Return JSON (omit empty arrays):\n"
+            '- "risks": [{"description": str, "impact": "high"|"medium"|"low", "likelihood": "high"|"medium"|"low", "mitigation": str|null, "status": "open"|"closed"}]\n'
+            '- "actions": [{"description": str, "owner": str|null, "due_date": "YYYY-MM-DD"|null, "priority": "high"|"medium"|"low", "status": "open"|"done"|"cancelled"}]\n'
+            '- "dependencies": [{"task_a": str, "dependency_type": "blocks"|"enables"|"relates_to", "task_b": str}]\n'
             "\n"
-            'Dependencies: "A blocks B" = A must finish before B can start. A is the blocker/prerequisite. '
-            'B is waiting/blocked. Example: "Backend API blocks Frontend UI" means backend must complete first.\n'
-            "\n"
-            "DATES: Use dates mentioned in descriptions, not file metadata dates.\n"
-            "\n"
-            "Assumptions and issues should be mapped to actions where an owner or due date is present, "
-            "otherwise to risks. Return only valid JSON, no explanation or markdown."
+            'STATUS: Actions COMPLETED/DONE/FINISHED/CLOSED="done". CANCELLED/DEFERRED="cancelled". Otherwise="open". '
+            'Risks RESOLVED/CLOSED/MITIGATED="closed". Check status columns AND narrative text.\n'
+            'Dependencies: "A blocks B" = A must finish before B starts. '
+            'Example: "Backend API blocks Frontend UI" means backend completes first. Check all tabs.\n'
+            "Dates: use task dates, not file metadata.\n"
+            "Assumptions/issues → actions if owner/date present, else risks.\n"
+            "JSON only, no markdown."
         ),
     },
     {

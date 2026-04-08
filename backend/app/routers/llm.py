@@ -28,7 +28,8 @@ async def llm_generate(req: GenerateRequest):
     Raw generate endpoint — useful for testing prompts during development.
     Not intended for production UI use (use /query instead).
     """
-    model = req.model or ollama.settings.llm_qa
+    from app.config import get_model_assignments
+    model = req.model or get_model_assignments()["general"]["model"]
     try:
         result = await ollama.generate(
             model=model,

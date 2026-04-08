@@ -247,9 +247,7 @@ def _build_context(db: Session) -> str:
     return "\n".join(sections)
 
 
-LLM_PROMPT_TEMPLATE = """You are a project management assistant. Answer the user's question using ONLY the project data provided below. Be concise and specific. If the data doesn't contain enough information to answer, say so clearly.
-
-PROJECT DATA:
+LLM_PROMPT_TEMPLATE = """PROJECT DATA:
 {context}
 
 USER QUESTION: {question}
@@ -290,12 +288,18 @@ async def query(req: QueryRequest, db: Session = Depends(get_db)):
     safe_question = req.question.strip()[:1000]
     prompt = LLM_PROMPT_TEMPLATE.format(context=context, question=safe_question)
 
-    model = ollama.settings.llm_reasoning if req.use_deep_reasoning else ollama.settings.llm_qa
-
     try:
-        answer = await ollama.generate(model=model, prompt=prompt, temperature=0.4)
+        if req.use_deep_reasoning:
+            answer = await ollama.reason(prompt)
+            role = "reasoning"
+        else:
+            answer = await ollama.general(prompt)
+            role = "general"
     except OllamaUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
+
+    from app.config import get_model_assignments
+    model_used = get_model_assignments()[role]["model"]
 
     # Extract lightweight citations from what was in context
     citations = _extract_citations(context, db)
@@ -303,7 +307,7 @@ async def query(req: QueryRequest, db: Session = Depends(get_db)):
     return QueryResponse(
         question=req.question,
         answer=answer.strip(),
-        model_used=model,
+        model_used=model_used,
         citations=citations,
         answered_directly=False,
     )

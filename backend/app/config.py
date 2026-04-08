@@ -34,12 +34,6 @@ class Settings(BaseSettings):
     database_url: str = f"sqlite:///{DATA_DIR}/project.db"
     ollama_base_url: str = "http://localhost:11434"
 
-    # Default model assignments — overridden at runtime by settings.json values.
-    # Prefix llm_ to avoid pydantic's protected model_ namespace.
-    llm_extraction: str = "mistral-nemo:latest"
-    llm_qa: str = "llama3.1:latest"
-    llm_reasoning: str = "deepseek-r1:latest"
-
     # Notification schedule (cron expression, default 9am daily)
     briefing_hour: int = 9
     briefing_minute: int = 0
@@ -47,6 +41,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = BASE_DIR / ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"  # ignore unknown env vars (e.g. old LLM_* entries)
 
 
 @lru_cache()
@@ -57,58 +52,109 @@ def get_settings() -> Settings:
 # ── Dynamic model assignments ─────────────────────────────────────────────────
 # Stored in settings.json so they can be changed at runtime without restart.
 #
-# Schema (v2):
-#   {"extraction": {"model": str, "context": int},
-#    "qa":         {"model": str, "context": int},
-#    "reasoning":  {"model": str, "context": int}}
+# Schema (v3):
+#   {"extraction": {"model": str, "context": int, "system_prompt": str},
+#    "general":    {"model": str, "context": int, "system_prompt": str},
+#    "reasoning":  {"model": str, "context": int, "system_prompt": str}}
 #
-# Backward compat: old entries stored as plain strings are migrated on read.
+# Backward compat: old "qa" key migrated to "general" on read.
+# Old flat-string values coerced to dict on read.
 
-_DEFAULT_CONTEXTS = {"extraction": 8192, "qa": 8192, "reasoning": 16384}
+_DEFAULT_CONTEXTS: dict[str, int] = {
+    "extraction": 8192,
+    "general":    8192,
+    "reasoning":  16384,
+}
+
+_DEFAULT_TIMEOUTS: dict[str, int] = {
+    "extraction": 120,
+    "general":    180,
+    "reasoning":  300,
+}
+
+DEFAULT_SYSTEM_PROMPTS: dict[str, str] = {
+    "extraction": (
+        "You are a project data extraction specialist. "
+        "Extract structured information quickly and precisely: actions, risks, deadlines, dependencies. "
+        "Extract only explicit content — do not infer or invent. "
+        "Return only valid JSON, no markdown, no explanation."
+    ),
+    "general": (
+        "You are a helpful project management assistant. "
+        "Answer questions clearly and concisely based on the project documents provided. "
+        "If the data doesn't contain enough information to answer, say so clearly."
+    ),
+    "reasoning": (
+        "You are a strategic project analyst. "
+        "Provide deep analysis of scope, risks, dependencies, and project health. "
+        "Show your reasoning process and highlight patterns or concerns the team should be aware of."
+    ),
+}
 
 
 def _normalise_assignment(value, role: str) -> dict:
-    """Coerce a stored value (str or dict) into {"model": str, "context": int}."""
+    """Coerce a stored value (str or dict) into {"model": str, "context": int, "system_prompt": str, "timeout": int}."""
+    default_ctx     = _DEFAULT_CONTEXTS.get(role, 8192)
+    default_prompt  = DEFAULT_SYSTEM_PROMPTS.get(role, "")
+    default_timeout = _DEFAULT_TIMEOUTS.get(role, 120)
     if isinstance(value, dict):
         return {
-            "model":   str(value.get("model", "")),
-            "context": int(value.get("context", _DEFAULT_CONTEXTS[role])),
+            "model":         str(value.get("model", "")),
+            "context":       int(value.get("context", default_ctx)),
+            "system_prompt": str(value.get("system_prompt", default_prompt)),
+            "timeout":       int(value.get("timeout", default_timeout)),
         }
     # Legacy flat-string format
-    return {"model": str(value), "context": _DEFAULT_CONTEXTS[role]}
+    return {"model": str(value), "context": default_ctx, "system_prompt": default_prompt, "timeout": default_timeout}
+
+
+_FALLBACK_MODELS = {
+    "extraction": "mistral-nemo:latest",
+    "general":    "llama3.1:latest",
+    "reasoning":  "deepseek-r1:latest",
+}
 
 
 def get_model_assignments() -> dict:
     """
-    Return current model role assignments with context lengths.
-    Reads from settings.json; falls back to Settings class defaults.
-    Returns: {"extraction": {"model": str, "context": int}, "qa": ..., "reasoning": ...}
+    Return current model role assignments with context lengths and system prompts.
+    Reads from settings.json; falls back to built-in defaults.
+    Returns: {"extraction": {...}, "general": {...}, "reasoning": {...}}
     """
     cfg = read_app_config()
     stored: dict = cfg.get("model_assignments", {})
-    defaults = get_settings()
-    fallbacks = {
-        "extraction": defaults.llm_extraction,
-        "qa":         defaults.llm_qa,
-        "reasoning":  defaults.llm_reasoning,
-    }
+
+    # Backward compat: migrate old "qa" key → "general"
+    if "qa" in stored and "general" not in stored:
+        stored["general"] = stored["qa"]
+
     result = {}
-    for role, default_model in fallbacks.items():
+    for role, default_model in _FALLBACK_MODELS.items():
         if role in stored and stored[role]:
             result[role] = _normalise_assignment(stored[role], role)
         else:
-            result[role] = {"model": default_model, "context": _DEFAULT_CONTEXTS[role]}
+            result[role] = {
+                "model":         default_model,
+                "context":       _DEFAULT_CONTEXTS[role],
+                "system_prompt": DEFAULT_SYSTEM_PROMPTS[role],
+                "timeout":       _DEFAULT_TIMEOUTS[role],
+            }
     return result
 
 
 def write_model_assignments(assignments: dict) -> None:
     """
     Persist model role assignments to settings.json.
-    Expects: {"extraction": {"model": str, "context": int}, "qa": ..., "reasoning": ...}
+    Expects: {"extraction": {"model": str, "context": int, "system_prompt": str}, ...}
     """
     cfg = read_app_config()
     cfg["model_assignments"] = {
-        role: {"model": assignments[role]["model"], "context": int(assignments[role]["context"])}
-        for role in ("extraction", "qa", "reasoning")
+        role: {
+            "model":         assignments[role]["model"],
+            "context":       int(assignments[role]["context"]),
+            "system_prompt": str(assignments[role].get("system_prompt", DEFAULT_SYSTEM_PROMPTS.get(role, ""))),
+            "timeout":       int(assignments[role].get("timeout", _DEFAULT_TIMEOUTS.get(role, 120))),
+        }
+        for role in ("extraction", "general", "reasoning")
     }
     write_app_config(cfg)

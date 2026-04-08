@@ -17,6 +17,8 @@ async def lifespan(app: FastAPI):
     # Startup
     init_db()
     start_scheduler()
+    from app.llm_service import ollama
+    await ollama.validate_assignments()
     yield
     # Shutdown
     stop_scheduler()

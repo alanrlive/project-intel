@@ -33,23 +33,17 @@ function DocumentTypesPanel() {
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [modal, setModal] = useState<ModalState | null>(null);
-  const [availableModels, setAvailableModels] = useState<string[]>([]);
 
   // Form state (controlled)
-  const [formName, setFormName] = useState("");
+  const [formName, setFormName]     = useState("");
   const [formPrompt, setFormPrompt] = useState("");
-  const [formModel, setFormModel] = useState("mistral-nemo");
-  const [saving, setSaving] = useState(false);
+  const [saving, setSaving]         = useState(false);
 
   const load = async () => {
     setLoading(true);
     try {
-      const [docTypes, modelsResp] = await Promise.allSettled([
-        api.listDocumentTypes(),
-        api.listOllamaModels(),
-      ]);
-      if (docTypes.status === "fulfilled") setTypes(docTypes.value);
-      if (modelsResp.status === "fulfilled") setAvailableModels(modelsResp.value.models);
+      const docTypes = await api.listDocumentTypes();
+      setTypes(docTypes);
     } catch {
       toast("Failed to load document types", "error");
     } finally {
@@ -69,14 +63,12 @@ function DocumentTypesPanel() {
   const openCreate = () => {
     setFormName("");
     setFormPrompt("");
-    setFormModel(availableModels[0] ?? "mistral-nemo");
     setModal({ mode: "create" });
   };
 
   const openEdit = (dt: DocumentType) => {
     setFormName(dt.name);
     setFormPrompt(dt.extraction_prompt);
-    setFormModel(dt.target_model);
     setModal({ mode: "edit", type: dt });
   };
 
@@ -95,7 +87,6 @@ function DocumentTypesPanel() {
         const created = await api.createDocumentType({
           name: formName.trim(),
           extraction_prompt: formPrompt.trim(),
-          target_model: formModel,
         });
         setTypes((prev) => [...prev, created]);
         toast("Document type created", "success");
@@ -103,7 +94,6 @@ function DocumentTypesPanel() {
         const updated = await api.updateDocumentType(modal.type.id, {
           name: formName.trim(),
           extraction_prompt: formPrompt.trim(),
-          target_model: formModel,
         });
         setTypes((prev) => prev.map((t) => t.id === updated.id ? updated : t));
         toast("Document type updated", "success");
@@ -125,10 +115,6 @@ function DocumentTypesPanel() {
       toast(err instanceof Error ? err.message : "Delete failed", "error");
     }
   };
-
-  // Model options: available from Ollama + known fallbacks deduplicated
-  const FALLBACK_MODELS = ["mistral-nemo", "llama3.1", "deepseek-r1"];
-  const modelOptions = Array.from(new Set([...availableModels, ...FALLBACK_MODELS]));
 
   return (
     <div className="space-y-4">
@@ -165,9 +151,6 @@ function DocumentTypesPanel() {
                     <span className="text-sm font-medium text-zinc-100 flex-1">{dt.name}</span>
 
                     <div className="flex items-center gap-2 shrink-0">
-                      <Badge variant="outline" className="font-mono text-xs">
-                        {dt.target_model}
-                      </Badge>
                       {dt.is_system && (
                         <Badge variant="info">System</Badge>
                       )}
@@ -202,10 +185,6 @@ function DocumentTypesPanel() {
                   {/* Expanded detail */}
                   {isExpanded && (
                     <div className="border-t border-zinc-700 py-3 space-y-2">
-                      <div className="flex items-center gap-2 text-xs text-zinc-500">
-                        <span className="font-medium">Target model:</span>
-                        <span className="font-mono text-zinc-300">{dt.target_model}</span>
-                      </div>
                       <div>
                         <p className="text-xs text-zinc-500 font-medium mb-1">Extraction prompt:</p>
                         <pre className="text-xs text-zinc-300 bg-zinc-800 rounded p-3 whitespace-pre-wrap leading-relaxed font-mono">
@@ -243,19 +222,6 @@ function DocumentTypesPanel() {
                   placeholder="e.g. Meeting Notes"
                   maxLength={100}
                 />
-              </div>
-
-              <div>
-                <label className="text-xs font-medium text-zinc-400 block mb-1">Target Model</label>
-                <select
-                  className={cn(INPUT, "cursor-pointer")}
-                  value={formModel}
-                  onChange={(e) => setFormModel(e.target.value)}
-                >
-                  {modelOptions.map((m) => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
-                </select>
               </div>
 
               <div>
@@ -304,7 +270,7 @@ const ROLE_LABELS: Record<keyof ModelAssignments, { label: string; description: 
     label: "Structured Extraction",
     description: "Used when processing uploaded documents (actions, risks, deadlines)",
   },
-  qa: {
+  general: {
     label: "General Q&A",
     description: "Used for chat, summaries, and conversational queries",
   },
@@ -317,9 +283,11 @@ const ROLE_LABELS: Record<keyof ModelAssignments, { label: string; description: 
 const CONTEXT_OPTIONS = [4096, 8192, 16384, 32768] as const;
 const DEFAULT_CONTEXTS: Record<keyof ModelAssignments, number> = {
   extraction: 8192,
-  qa:         8192,
+  general:    8192,
   reasoning:  16384,
 };
+
+const SYSTEM_PROMPT_MAX = 2000;
 
 function LlmConfigPanel() {
   const [ollamaConnected, setOllamaConnected] = useState<boolean | null>(null);
@@ -360,9 +328,9 @@ function LlmConfigPanel() {
         if (!extractionInstalled) {
           const first = available[0];
           const init: ModelAssignments = {
-            extraction: { model: first, context: DEFAULT_CONTEXTS.extraction },
-            qa:         { model: first, context: DEFAULT_CONTEXTS.qa },
-            reasoning:  { model: first, context: DEFAULT_CONTEXTS.reasoning },
+            extraction: { model: first, context: DEFAULT_CONTEXTS.extraction, system_prompt: current.extraction.system_prompt },
+            general:    { model: first, context: DEFAULT_CONTEXTS.general,    system_prompt: current.general.system_prompt },
+            reasoning:  { model: first, context: DEFAULT_CONTEXTS.reasoning,  system_prompt: current.reasoning.system_prompt },
           };
           await api.saveModelAssignments(init);
           setAssignments(init);
@@ -400,6 +368,11 @@ function LlmConfigPanel() {
 
   const updateDraftContext = (role: keyof ModelAssignments, context: number) => {
     setDraft((prev) => prev ? { ...prev, [role]: { ...prev[role], context } } : null);
+    setAssignmentsDirty(true);
+  };
+
+  const updateDraftSystemPrompt = (role: keyof ModelAssignments, system_prompt: string) => {
+    setDraft((prev) => prev ? { ...prev, [role]: { ...prev[role], system_prompt } } : null);
     setAssignmentsDirty(true);
   };
 
@@ -522,13 +495,15 @@ function LlmConfigPanel() {
             <>
               <div className="space-y-4">
                 {(Object.keys(ROLE_LABELS) as (keyof ModelAssignments)[]).map((role) => {
-                  const roleModel   = draft[role].model;
-                  const roleContext = draft[role].context;
-                  const broken = !isInstalled(roleModel) && ollamaConnected === true;
+                  const roleModel        = draft[role].model;
+                  const roleContext      = draft[role].context;
+                  const rolePrompt      = draft[role].system_prompt;
+                  const broken  = !isInstalled(roleModel) && ollamaConnected === true;
                   const highCtx = roleContext >= 32768;
+                  const promptOver = rolePrompt.length > SYSTEM_PROMPT_MAX;
 
                   return (
-                    <div key={role} className="space-y-1.5">
+                    <div key={role} className="space-y-1.5 pb-4 border-b border-zinc-700 last:border-0 last:pb-0">
                       <div className="flex items-center gap-2">
                         <label className="text-xs font-medium text-zinc-300">
                           {ROLE_LABELS[role].label}
@@ -580,6 +555,26 @@ function LlmConfigPanel() {
                           )}
                         </div>
                       </div>
+
+                      {/* System prompt */}
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-xs text-zinc-500">System prompt</label>
+                          <span className={cn("text-xs", promptOver ? "text-red-400" : "text-zinc-600")}>
+                            {rolePrompt.length}/{SYSTEM_PROMPT_MAX}
+                          </span>
+                        </div>
+                        <textarea
+                          value={rolePrompt}
+                          onChange={(e) => updateDraftSystemPrompt(role, e.target.value)}
+                          rows={3}
+                          className={cn(
+                            "w-full bg-zinc-800 border rounded px-2 py-1.5 text-xs text-zinc-300 resize-none font-mono leading-relaxed focus:outline-none focus:border-zinc-400",
+                            promptOver ? "border-red-700" : "border-zinc-700"
+                          )}
+                          placeholder="Instructions sent to the model before every request for this role…"
+                        />
+                      </div>
                     </div>
                   );
                 })}
@@ -588,7 +583,12 @@ function LlmConfigPanel() {
               <Button
                 size="sm"
                 onClick={saveAssignments}
-                disabled={!assignmentsDirty || savingAssignments}
+                disabled={
+                  !assignmentsDirty || savingAssignments ||
+                  (Object.keys(ROLE_LABELS) as (keyof ModelAssignments)[]).some(
+                    (r) => draft[r].system_prompt.length > SYSTEM_PROMPT_MAX
+                  )
+                }
                 className="w-full justify-center"
               >
                 <Save size={13} />

@@ -26,27 +26,32 @@ class OllamaService:
         format: Literal["json", "text"] = "text",
         temperature: float = 0.7,
         num_ctx: int | None = None,
+        system: str | None = None,
+        timeout: float = 120.0,
     ) -> str:
         """
         Call Ollama /api/generate. Returns the response string.
         Raises OllamaUnavailableError if Ollama isn't running.
-        num_ctx sets the context window size passed to Ollama.
+        num_ctx sets the context window size; system sets the system prompt.
+        timeout is the HTTP request timeout in seconds.
         """
         options: dict = {"temperature": temperature}
         if num_ctx is not None:
             options["num_ctx"] = num_ctx
 
         payload: dict = {
-            "model": model,
-            "prompt": prompt,
-            "stream": False,
+            "model":   model,
+            "prompt":  prompt,
+            "stream":  False,
             "options": options,
         }
         if format == "json":
             payload["format"] = "json"
+        if system:
+            payload["system"] = system
 
         try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
+            async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.post(
                     f"{self.base_url}/api/generate",
                     json=payload,
@@ -60,7 +65,7 @@ class OllamaService:
             )
         except httpx.TimeoutException:
             raise OllamaUnavailableError(
-                f"Ollama timed out after 120s while generating with model '{model}'."
+                f"Ollama timed out after {timeout}s while generating with model '{model}'."
             )
 
     # ── Model resolution ─────────────────────────────────────────────────────
@@ -104,17 +109,21 @@ class OllamaService:
 
     async def extract(self, prompt: str) -> dict:
         """
-        Structured extraction — uses the configured extraction model and context length.
-        Assignments are read from settings.json at call time so runtime
-        changes take effect without restarting the backend.
+        Structured extraction — uses the configured extraction model, context length,
+        and system prompt. Assignments are read from settings.json at call time.
         Returns parsed dict (raises ValueError on bad JSON).
         """
         assignments = get_model_assignments()
         role_cfg = assignments["extraction"]
         model = await self._resolve_model(role_cfg["model"], "extraction")
         raw = await self.generate(
-            model=model, prompt=prompt, format="json",
-            temperature=0.3, num_ctx=role_cfg["context"],
+            model=model,
+            prompt=prompt,
+            format="json",
+            temperature=0.3,
+            num_ctx=role_cfg["context"],
+            system=role_cfg["system_prompt"] or None,
+            timeout=float(role_cfg.get("timeout", 120)),
         )
         try:
             return json.loads(raw)
@@ -122,24 +131,34 @@ class OllamaService:
             logger.error("LLM returned invalid JSON: %s", raw[:500])
             raise ValueError(f"LLM returned malformed JSON: {exc}") from exc
 
-    async def chat(self, prompt: str) -> str:
-        """General Q&A — uses the configured qa model and context length."""
+    async def general(self, prompt: str) -> str:
+        """General Q&A — uses the configured general model, context length, and system prompt."""
         assignments = get_model_assignments()
-        role_cfg = assignments["qa"]
-        model = await self._resolve_model(role_cfg["model"], "qa")
+        role_cfg = assignments["general"]
+        model = await self._resolve_model(role_cfg["model"], "general")
         return await self.generate(
-            model=model, prompt=prompt, format="text",
-            temperature=0.7, num_ctx=role_cfg["context"],
+            model=model,
+            prompt=prompt,
+            format="text",
+            temperature=0.7,
+            num_ctx=role_cfg["context"],
+            system=role_cfg["system_prompt"] or None,
+            timeout=float(role_cfg.get("timeout", 180)),
         )
 
     async def reason(self, prompt: str) -> str:
-        """Deep reasoning — uses the configured reasoning model and context length."""
+        """Deep reasoning — uses the configured reasoning model, context length, and system prompt."""
         assignments = get_model_assignments()
         role_cfg = assignments["reasoning"]
         model = await self._resolve_model(role_cfg["model"], "reasoning")
         return await self.generate(
-            model=model, prompt=prompt, format="text",
-            temperature=0.5, num_ctx=role_cfg["context"],
+            model=model,
+            prompt=prompt,
+            format="text",
+            temperature=0.5,
+            num_ctx=role_cfg["context"],
+            system=role_cfg["system_prompt"] or None,
+            timeout=float(role_cfg.get("timeout", 300)),
         )
 
     # ── Health & discovery ───────────────────────────────────────────────────
@@ -168,6 +187,34 @@ class OllamaService:
         except Exception:
             return []
 
+    async def validate_assignments(self) -> None:
+        """
+        Check that each configured model is available in Ollama.
+        Logs warnings for missing models — never raises (don't crash on startup).
+        """
+        healthy = await self.check_health()
+        if not healthy:
+            logger.warning("Ollama not reachable at %s — skipping model validation", self.base_url)
+            return
+
+        available = await self.list_model_names()
+        assignments = get_model_assignments()
+
+        for role, cfg in assignments.items():
+            model = cfg["model"]
+            installed = (
+                model in available or
+                any(n.startswith(model) or model.startswith(n.split(":")[0]) for n in available)
+            )
+            if not installed:
+                logger.warning(
+                    "Role '%s' configured model '%s' is not installed in Ollama. "
+                    "Run: ollama pull %s",
+                    role, model, model,
+                )
+            else:
+                logger.info("Role '%s' → model '%s' [OK]", role, model)
+
     async def status_report(self) -> dict:
         """
         Full status dict used by the /llm/status endpoint.
@@ -193,7 +240,6 @@ class OllamaService:
         models = await self.list_models()
         names = [m["name"] for m in models]
 
-        # A model is "ready" if it has an exact or prefix match in the available list
         def is_ready(model_name: str) -> bool:
             if model_name in names:
                 return True
@@ -202,14 +248,14 @@ class OllamaService:
                 for n in names
             )
 
-        missing = [m for m in assignments.values() if not is_ready(m)]
+        missing = [cfg["model"] for cfg in assignments.values() if not is_ready(cfg["model"])]
 
         return {
             "ollama_running": True,
             "ollama_url": self.base_url,
             "models_available": names,
             "configured_models": assignments,
-            "models_ready": {role: is_ready(model) for role, model in assignments.items()},
+            "models_ready": {role: is_ready(cfg["model"]) for role, cfg in assignments.items()},
             "missing_models": missing,
             "pull_commands": [f"ollama pull {m}" for m in missing],
         }

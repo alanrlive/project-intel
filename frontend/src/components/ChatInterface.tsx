@@ -26,11 +26,39 @@ export function ChatInterface({ ollamaOk }: { ollamaOk: boolean }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [deepReason, setDeepReason] = useState(false);
+  const [reasoningModel, setReasoningModel] = useState<string>("reasoning model");
+  const [elapsed, setElapsed] = useState(0);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // Load the reasoning model name from settings
+  useEffect(() => {
+    api.getModelAssignments()
+      .then((a) => {
+        const m = a.reasoning.model;
+        // Strip tag suffix for display (e.g. "gemma4:31b" → "gemma4:31b", keep as-is)
+        setReasoningModel(m);
+      })
+      .catch(() => {});
+  }, []);
+
+  const startTimer = () => {
+    setElapsed(0);
+    timerRef.current = setInterval(() => setElapsed((s) => s + 1), 1000);
+  };
+
+  const stopTimer = () => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  };
+
+  useEffect(() => () => stopTimer(), []);
 
   const send = async (question = input) => {
     const q = question.trim();
@@ -38,6 +66,7 @@ export function ChatInterface({ ollamaOk }: { ollamaOk: boolean }) {
     setInput("");
     setMessages((prev) => [...prev, { role: "user", text: q }]);
     setLoading(true);
+    startTimer();
 
     try {
       const response = await api.query(q, deepReason);
@@ -47,7 +76,13 @@ export function ChatInterface({ ollamaOk }: { ollamaOk: boolean }) {
       setMessages((prev) => [...prev, { role: "assistant", text: "", error: msg }]);
     } finally {
       setLoading(false);
+      stopTimer();
     }
+  };
+
+  const formatElapsed = (s: number) => {
+    if (s < 60) return `${s}s`;
+    return `${Math.floor(s / 60)}m ${s % 60}s`;
   };
 
   return (
@@ -62,7 +97,8 @@ export function ChatInterface({ ollamaOk }: { ollamaOk: boolean }) {
             className="accent-blue-500"
           />
           <Zap size={12} className="text-purple-400" />
-          Deep reasoning (DeepSeek-R1)
+          Deep reasoning
+          <span className="font-mono text-zinc-500">({reasoningModel})</span>
         </label>
       </div>
 
@@ -131,16 +167,24 @@ export function ChatInterface({ ollamaOk }: { ollamaOk: boolean }) {
             <div className="w-7 h-7 rounded-full bg-zinc-700 flex items-center justify-center">
               <Bot size={14} className="text-zinc-300" />
             </div>
-            <div className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2">
-              <div className="flex gap-1 items-center h-5">
-                {[0, 1, 2].map((i) => (
-                  <span
-                    key={i}
-                    className="w-1.5 h-1.5 rounded-full bg-zinc-400 animate-bounce"
-                    style={{ animationDelay: `${i * 0.15}s` }}
-                  />
-                ))}
-              </div>
+            <div className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2.5">
+              {deepReason ? (
+                <div className="flex items-center gap-2 text-xs text-zinc-400">
+                  <Zap size={11} className="text-purple-400 animate-pulse shrink-0" />
+                  <span>Deep reasoning in progress…</span>
+                  <span className="font-mono text-zinc-500 tabular-nums">{formatElapsed(elapsed)}</span>
+                </div>
+              ) : (
+                <div className="flex gap-1 items-center h-5">
+                  {[0, 1, 2].map((i) => (
+                    <span
+                      key={i}
+                      className="w-1.5 h-1.5 rounded-full bg-zinc-400 animate-bounce"
+                      style={{ animationDelay: `${i * 0.15}s` }}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}

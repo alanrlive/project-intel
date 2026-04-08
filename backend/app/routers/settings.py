@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.config import (
     get_settings, read_app_config, write_app_config,
-    get_model_assignments, write_model_assignments,
+    get_model_assignments, write_model_assignments, DEFAULT_SYSTEM_PROMPTS,
 )
 from app.database import get_db
 from app.models import Document, DocumentType
@@ -41,13 +41,11 @@ class DocumentTypeOut(BaseModel):
 class DocumentTypeCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     extraction_prompt: str = Field(..., min_length=1, max_length=5000)
-    target_model: str = Field(default="mistral-nemo", max_length=100)
 
 
 class DocumentTypeUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     extraction_prompt: str | None = Field(default=None, min_length=1, max_length=5000)
-    target_model: str | None = Field(default=None, max_length=100)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -73,7 +71,7 @@ def create_document_type(body: DocumentTypeCreate, db: Session = Depends(get_db)
     dt = DocumentType(
         name=body.name,
         extraction_prompt=body.extraction_prompt,
-        target_model=body.target_model,
+        target_model="",  # model selection now handled by extraction role assignment
         is_system=False,
     )
     db.add(dt)
@@ -107,8 +105,6 @@ def update_document_type(
 
     if body.extraction_prompt is not None:
         dt.extraction_prompt = body.extraction_prompt
-    if body.target_model is not None:
-        dt.target_model = body.target_model
 
     db.commit()
     db.refresh(dt)
@@ -193,34 +189,56 @@ VALID_CONTEXTS = {4096, 8192, 16384, 32768}
 
 
 class RoleAssignment(BaseModel):
-    model:   str = Field(..., min_length=1, max_length=200)
-    context: int = Field(default=8192)
-
-    def validate_context(self) -> "RoleAssignment":
-        if self.context not in VALID_CONTEXTS:
-            raise ValueError(f"context must be one of {sorted(VALID_CONTEXTS)}")
-        return self
+    model:         str = Field(..., min_length=1, max_length=200)
+    context:       int = Field(default=8192)
+    system_prompt: str = Field(default="", max_length=2000)
+    timeout:       int = Field(default=120)
 
 
 class ModelAssignmentsBody(BaseModel):
     extraction: RoleAssignment
-    qa:         RoleAssignment
+    general:    RoleAssignment
     reasoning:  RoleAssignment
 
 
 @router.get("/model-assignments", tags=["settings"])
 def get_assignments():
-    """Return current model role assignments with context lengths."""
+    """Return current model role assignments with context lengths and system prompts."""
     return get_model_assignments()
 
 
 @router.post("/model-assignments", tags=["settings"])
-def save_assignments(body: ModelAssignmentsBody):
-    """Save model role assignments to settings.json. Takes effect immediately."""
+async def save_assignments(body: ModelAssignmentsBody):
+    """
+    Save model role assignments to settings.json. Takes effect immediately.
+    Validates that context values are in the allowed set.
+    """
+    for role, assignment in [("extraction", body.extraction), ("general", body.general), ("reasoning", body.reasoning)]:
+        if assignment.context not in VALID_CONTEXTS:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Role '{role}': context must be one of {sorted(VALID_CONTEXTS)}, got {assignment.context}",
+            )
+
     assignments = {
-        "extraction": {"model": body.extraction.model, "context": body.extraction.context},
-        "qa":         {"model": body.qa.model,         "context": body.qa.context},
-        "reasoning":  {"model": body.reasoning.model,  "context": body.reasoning.context},
+        "extraction": {
+            "model":         body.extraction.model,
+            "context":       body.extraction.context,
+            "system_prompt": body.extraction.system_prompt,
+            "timeout":       body.extraction.timeout,
+        },
+        "general": {
+            "model":         body.general.model,
+            "context":       body.general.context,
+            "system_prompt": body.general.system_prompt,
+            "timeout":       body.general.timeout,
+        },
+        "reasoning": {
+            "model":         body.reasoning.model,
+            "context":       body.reasoning.context,
+            "system_prompt": body.reasoning.system_prompt,
+            "timeout":       body.reasoning.timeout,
+        },
     }
     write_model_assignments(assignments)
     return assignments

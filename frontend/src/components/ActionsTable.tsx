@@ -259,6 +259,9 @@ export function ActionsTable() {
                       {a.due_date ? (
                         <span className={due.urgent ? "text-red-400" : "text-zinc-400"}>
                           {due.label}
+                          {due.date && (
+                            <span className="block text-xs text-zinc-500">{due.date}</span>
+                          )}
                         </span>
                       ) : <span className="text-zinc-600">—</span>}
                     </td>

@@ -180,7 +180,7 @@ export const api = {
   listDocumentTypes: () =>
     request<DocumentType[]>("/settings/document-types"),
 
-  createDocumentType: (data: { name: string; extraction_prompt: string; target_model: string }) =>
+  createDocumentType: (data: { name: string; extraction_prompt: string }) =>
     request<DocumentType>("/settings/document-types", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -189,7 +189,7 @@ export const api = {
 
   updateDocumentType: (
     id: number,
-    data: { name?: string; extraction_prompt?: string; target_model?: string },
+    data: { name?: string; extraction_prompt?: string },
   ) =>
     request<DocumentType>(`/settings/document-types/${id}`, {
       method: "PATCH",

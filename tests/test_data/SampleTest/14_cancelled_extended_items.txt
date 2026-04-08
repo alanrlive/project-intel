@@ -1,0 +1,120 @@
+CANCELLED & EXTENDED ITEMS - March 14, 2026
+==============================================
+
+ACTIONS - CANCELLED:
+
+Action: Add dark mode theme to UI
+Owner: Alan
+Original Due: March 20
+Status: CANCELLED - Out of scope for V2
+Reason: Cosmetic feature, focus on core functionality
+Cancellation Date: March 13, 2026
+
+Action: Implement keyboard shortcuts for navigation  
+Owner: Alan
+Original Due: March 25
+Status: CANCELLED - Deferred to V3
+Reason: Nice-to-have, not essential for MVP
+
+Action: Build export to PDF report feature
+Owner: TBD
+Original Due: April 1
+Status: CANCELLED - Scope reduction
+Reason: User can screenshot or use browser print
+
+Action: Add multi-language support
+Owner: Alan
+Due: April 10
+Status: CANCELLED - Not needed for single user
+Cancellation Date: March 14
+
+
+DEADLINES - EXTENDED:
+
+Deadline: Prompts 4-6 complete
+Original: March 15, 2026
+EXTENDED TO: March 18, 2026
+Reason: Complexity underestimated, need 3 extra days
+
+Deadline: Feature freeze for V2
+Original: March 28
+EXTENDED TO: April 5
+Reason: Quality over speed, allowing buffer for polish
+
+Deadline: V2.0 Release
+Original: April 15, 2026
+EXTENDED TO: April 20, 2026
+Reason: Documentation and testing needs more time
+
+
+DEADLINES - BROUGHT FORWARD:
+
+Deadline: Database backup implementation
+Original: March 20
+BROUGHT FORWARD TO: March 10 (COMPLETED)
+Reason: Critical risk, prioritized higher
+
+
+RISKS - NO LONGER APPLICABLE:
+
+Risk R-TECH-001: Ollama RAM issues
+Status: NO LONGER APPLICABLE
+Closure Date: March 11, 2026
+Resolution: Hardware upgraded to 16GB, issue eliminated
+
+Risk R-UX-001: Drag-drop confusion
+Status: NOT APPLICABLE ANYMORE
+Closure: March 7, 2026
+Resolution: Visual feedback added, works intuitively
+
+Risk R-TECH-004: CSP blocking needed functionality
+Status: OBSOLETE
+Closure: March 6, 2026
+Resolution: Tested and confirmed all functionality works within CSP
+
+
+DEPENDENCIES - UNBLOCKED:
+
+Dependency: Backend API blocks Frontend development
+Status: UNBLOCKED as of March 1, 2026
+Resolution: API stable and documented
+
+Dependency: Batch upload endpoint blocks Frontend upload UI
+Status: RESOLVED March 5, 2026
+Resolution: Endpoint live and integrated
+
+Dependency: Settings page blocks intake folder work
+Status: NO LONGER BLOCKING - March 8
+Resolution: Settings page shipped
+
+
+ACTIONS - STATUS CHANGED TO DONE:
+
+Action A001: Database backup script
+Was: Open
+Now: COMPLETED - March 10
+Owner: Alan
+
+Action A002: Fix drag-drop bug
+Was: In Progress  
+Now: DONE - March 7
+Owner: Alan
+
+Action A003: Settings page CRUD
+Was: In Progress
+Now: FINISHED - March 8
+Owner: Alan
+
+Action A004: Refine extraction prompts
+Was: Open
+Now: COMPLETED - March 12
+Owner: Alan
+
+
+NOTES:
+- All cancelled items documented for future reference
+- Extended deadlines approved (by myself to myself)
+- No longer maintaining separate "wishlist" document
+- Focus is on shipping V2, everything else deferred
+
+Last Updated: March 14, 2026 23:45

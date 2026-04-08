@@ -1,5 +1,4 @@
 import email
-import json
 import logging
 from datetime import date
 from pathlib import Path
@@ -29,13 +28,15 @@ Return ONLY valid JSON with these exact keys (use empty arrays if nothing found)
       "description": "string",
       "owner": "string or null",
       "due_date": "YYYY-MM-DD or null",
-      "priority": "high|medium|low"
+      "priority": "high|medium|low",
+      "status": "open|done|cancelled"
     }}
   ],
   "deadlines": [
     {{
       "description": "string",
-      "deadline_date": "YYYY-MM-DD"
+      "deadline_date": "YYYY-MM-DD",
+      "met": true or false
     }}
   ],
   "risks": [
@@ -43,7 +44,8 @@ Return ONLY valid JSON with these exact keys (use empty arrays if nothing found)
       "description": "string",
       "impact": "high|medium|low",
       "likelihood": "high|medium|low",
-      "mitigation": "string or null"
+      "mitigation": "string or null",
+      "status": "open|closed"
     }}
   ],
   "dependencies": [
@@ -56,10 +58,19 @@ Return ONLY valid JSON with these exact keys (use empty arrays if nothing found)
   "scope_items": [
     {{
       "description": "string",
-      "source": "original_plan|change_request|meeting"
+      "source": "original_plan|change_request|meeting|deferred"
     }}
   ]
 }}
+
+EXTRACTION RULES:
+- STATUS: Actions marked COMPLETED/DONE/FINISHED → "done". CANCELLED/DEFERRED → "cancelled". Otherwise → "open".
+- STATUS: RISKS: Extract ALL risks including resolved/past ones from ANY section:   Look for: "Risk:", risk descriptions with impact/likelihood mentioned,  sections titled "Risks", "Resolved Risks", "Risks That Cleared Up". RESOLVED/CLOSED/MITIGATED/COMPLETELY GONE/NO LONGER AN ISSUE → status="closed" Otherwise → status="open". Example: Extract narrative risks: "X is no longer a problem", "That risk is gone"
+- DEADLINES: Marked MET/ACHIEVED/DELIVERED → met=true. Otherwise → met=false.
+- DATES: Extract ONLY from task text ("Due March 15", "by Feb 20", "deadline: 2025-03-10").  NEVER use the document's creation date, last modified date, or header/footer dates. If year missing, assume current year ({current_year}). Convert all dates to YYYY-MM-DD format for output. If no date in task description, return null.
+- DEPENDENCIES: "A blocks B" means A must finish before B starts.
+- SCOPE: Include future features, ideas marked DEFERRED/V3/OUT OF SCOPE.
+- IMPORTANT: Extract ALL risks including resolved ones. Past risks are valuable historical data.
 
 Document content:
 {content}"""
@@ -244,32 +255,8 @@ async def extract_with_type(
 
     prompt = f"{doc_type.extraction_prompt}\n\nDocument content:\n{content}"
 
-    # Use the model specified on the DocumentType; fall back to Ollama's own fallback
-    available = await llm.list_model_names()
-    model = doc_type.target_model
-
-    # Normalise: accept short name like "mistral-nemo" matching "mistral-nemo:latest"
-    if model not in available:
-        for avail in available:
-            if avail.startswith(model):
-                model = avail
-                break
-        else:
-            logger.warning(
-                "Model '%s' not available for type '%s' — using extraction fallback",
-                doc_type.target_model, doc_type.name,
-            )
-            model = None  # let llm.extract() pick the best available
-
-    if model:
-        raw = await llm.generate(model=model, prompt=prompt, format="json", temperature=0.3)
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError as exc:
-            logger.error("LLM returned invalid JSON for type '%s': %s", doc_type.name, raw[:300])
-            raise ValueError(f"LLM returned malformed JSON: {exc}") from exc
-    else:
-        return await run_llm_extraction(content, doc_type.name, llm)
+    # Model, context, and system_prompt come from the extraction role assignment
+    return await llm.extract(prompt)
 
 
 # ── Date validation ───────────────────────────────────────────────────────────
@@ -298,15 +285,19 @@ def store_extracted_data(extracted: dict, doc_id: int, db: Session) -> dict:
         "scope_items": 0,
     }
 
+    _valid_action_status = {"open", "done", "cancelled"}
+    _valid_risk_status   = {"open", "closed"}
+
     for item in extracted.get("actions", []):
         if not item.get("description"):
             continue
+        raw_status = item.get("status", "open")
         db.add(Action(
             description=item["description"],
             owner=item.get("owner"),
             due_date=_parse_date(item.get("due_date")),
             priority=item.get("priority", "medium"),
-            status="open",
+            status=raw_status if raw_status in _valid_action_status else "open",
             created_from_doc_id=doc_id,
         ))
         counts["actions"] += 1
@@ -318,6 +309,7 @@ def store_extracted_data(extracted: dict, doc_id: int, db: Session) -> dict:
         db.add(Deadline(
             description=item["description"],
             deadline_date=dl,
+            met=bool(item.get("met", False)),
             source_doc_id=doc_id,
         ))
         counts["deadlines"] += 1
@@ -325,12 +317,13 @@ def store_extracted_data(extracted: dict, doc_id: int, db: Session) -> dict:
     for item in extracted.get("risks", []):
         if not item.get("description"):
             continue
+        raw_status = item.get("status", "open")
         db.add(Risk(
             description=item["description"],
             impact=item.get("impact", "medium"),
             likelihood=item.get("likelihood", "medium"),
             mitigation=item.get("mitigation"),
-            status="open",
+            status=raw_status if raw_status in _valid_risk_status else "open",
         ))
         counts["risks"] += 1
 

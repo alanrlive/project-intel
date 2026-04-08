@@ -6,20 +6,22 @@ I'm building a GDPR-compliant, self-hosted AI-powered project management assista
 
 ## Current Status: WORKING PRODUCTION APP ✅
 
-### What's Complete (as of 2026-04-06)
+### What's Complete (as of 2026-04-08)
 - **Backend (FastAPI + SQLite):** 8 tables, 7 router modules
 - **Frontend (Tauri v2 + React):** 8 views including Settings with 4 tabs
-- **LLM Integration (Ollama):** mistral-nemo, llama3.1, deepseek-r1 — model fallback logic
+- **LLM Integration (Ollama):** Dynamic model assignments — model, context, system prompt, and timeout per role; no hardcoded model names anywhere
 - **Features Working:**
   - Batch document upload (drag-and-drop, multi-file queue, per-file type selection)
-  - Excel support (.xlsx → markdown table via openpyxl)
-  - Custom document types with per-type extraction prompts and LLM model selection
+  - Excel support (.xlsx → all sheets → markdown tables via openpyxl)
+  - Custom document types with per-type extraction prompts (model selection removed — uses extraction role)
   - Intake folder: configure a watched folder, scan it, batch-process files by path, auto-move on success
   - Automatic structured extraction (actions, risks, deadlines, dependencies, scope items)
+  - Status fields preserved from LLM: actions get done/cancelled/open, risks get closed/open, deadlines get met=true/false
   - Daily briefing with smart notifications (overdue, upcoming, high-risk)
-  - Conversational Q&A chat (deep reasoning toggle, citations)
-  - All 5 data tables with CRUD operations and pagination (50/page)
-  - Settings page: Document Types CRUD, Folders/intake config, LLM status, About
+  - Conversational Q&A chat: deep reasoning toggle shows actual configured model name, elapsed timer during reasoning
+  - All 5 data tables: CRUD, sort, CSV export, source document download links, pagination (50/page)
+  - Due dates show both relative label ("14d overdue") AND actual date below it
+  - Settings page: Document Types CRUD, Folders/intake config, LLM Config (model + context + system prompt + timeout per role), About
   - Integration tests: 26/26 passing
 
 ## Tech Stack
@@ -118,13 +120,43 @@ from app.routers import settings as settings_router
 - Security: backend validates each path is inside configured intake folder before reading
 - On success: `shutil.move()` to `uploads/` with `_unique_dest()` (timestamp-based dedup)
 - Frontend uses `new File([], filename)` as display stub (no real bytes needed in browser)
+- "Load from Intake Folder" replaces prior intake entries (no duplicates): filters `!e.fromIntakePath` before adding new ones
+
+### Dynamic model assignments (v3 schema)
+Settings.json `model_assignments` schema — each role has 4 fields:
+```json
+{
+  "extraction": {"model": "gemma4:e4b",  "context": 8192,  "system_prompt": "...", "timeout": 120},
+  "general":    {"model": "gemma4:e4b",  "context": 8192,  "system_prompt": "...", "timeout": 180},
+  "reasoning":  {"model": "gemma4:31b",  "context": 16384, "system_prompt": "...", "timeout": 300}
+}
+```
+- `_normalise_assignment()` backward compat: coerces old `str` or `{model, context}` dict to full v3 shape
+- Old `"qa"` key migrated to `"general"` on read
+- `Settings` class no longer has `llm_*` fields — `extra = "ignore"` handles stale `.env` vars
+- `get_model_assignments()` reads `_FALLBACK_MODELS` dict if nothing in settings.json
+- `generate()` in `llm_service.py` accepts `system` (sent as Ollama `system` field) and `timeout` params
+- All three role methods (`extract`, `general`, `reason`) pass role cfg values at call time
+- `validate_assignments()` runs at startup — logs warnings for missing models, never raises
+- `extract_with_type()` uses extraction role for model/context/system — `target_model` on `DocumentType` is now unused/ignored
+- UI: LLM Config tab shows model + context + system prompt textarea + timeout (future) per role
+
+### System type seeding
+`_seed_system_types()` in `database.py` runs at every startup via `init_db()`. INSERT-or-UPDATE — prompt changes apply to existing DBs without migration.
+
+### Extraction status fields
+`store_extracted_data()` in `document_processor.py` preserves LLM-returned status values:
+- `action.status`: must be in `{"open","done","cancelled"}` — fallback `"open"`
+- `risk.status`: must be in `{"open","closed"}` — fallback `"open"`
+- `deadline.met`: `bool(item.get("met", False))`
 
 ### Model name resolution
-Ollama returns `"mistral-nemo:latest"` but DocumentType stores `"mistral-nemo"`.
-`extract_with_type()` resolves: exact match → prefix match → fallback to service default.
+Ollama returns `"gemma4:e4b"` — stored configs may omit tag.
+`_resolve_model()` in `llm_service.py`: exact match → prefix match → first available → error.
 
-### pydantic Settings fields
-Use `llm_*` prefix (not `model_*`) — `model_` is a protected namespace in pydantic v2.
+### pydantic Settings — no llm_* fields
+`Settings` class only has `project_name`, `database_url`, `ollama_base_url`, `briefing_hour/minute`.
+`extra = "ignore"` set so stale `.env` vars (`LLM_QA` etc.) don't cause `ValidationError` on startup.
 
 ## Startup Commands
 ```powershell
@@ -148,6 +180,7 @@ python test_batch_upload.py
 **Documents:**
 - `POST /documents/upload` — legacy single-file upload
 - `GET /documents` — list all; `DELETE /documents/{id}`
+- `GET /documents/{id}/file` — download original file (FileResponse)
 - `POST /documents/batch-upload` — multi-file FormData, sequential
 - `GET /documents/intake-folder/scan` — list files in intake folder
 - `POST /documents/batch-upload-intake` — process + move intake files (JSON paths)
@@ -158,12 +191,53 @@ python test_batch_upload.py
 - `GET/POST/DELETE /settings/intake-folder` — get/set/clear intake folder path
 - `GET /settings/ollama/models` — list Ollama models
 - `POST /settings/ollama/test` — test connection (never raises)
+- `GET/POST /settings/model-assignments` — get/save per-role `{model, context, system_prompt, timeout}` assignments
+- `POST /settings/ollama/pull` — pull a model (600s timeout, never raises)
 
 **Data CRUD:** `/actions`, `/risks`, `/deadlines`, `/dependencies`, `/scope-items` — GET/POST/PATCH/DELETE
 
 **Other:** `POST /query`, `GET /notifications`, `POST /notifications/refresh`, `GET /llm/status`
 
 ## What Was Built (Session History)
+
+### Dynamic Model Config v2 + Timeouts (2026-04-08)
+- **`qa` → `general` rename:** All code, types, settings.json schema, UI updated. Backward compat: old `"qa"` key in settings.json migrated to `"general"` on read.
+- **`system_prompt` per role:** Stored in settings.json, passed to Ollama `/api/generate` as `system` field. Configurable via textarea in LLM Config tab (2000 char limit, char counter, save blocked if over).
+- **`timeout` per role:** Defaults: extraction 120s, general 180s, reasoning 300s. Stored in settings.json, used as httpx client timeout. Fixes gemma4:31b timing out.
+- **`target_model` removed from document types:** `extract_with_type()` now always uses the extraction role assignment. `DocumentType.target_model` field still exists in DB but is unused. Create/edit forms no longer show it.
+- **Pydantic fix:** `Settings` class no longer has `llm_*` fields. `extra = "ignore"` added so stale `.env` vars don't crash startup.
+- **`validate_assignments()` on startup:** Checks each configured model against Ollama's installed list at startup. Logs warnings, never raises.
+- **Chat UI:** Deep reasoning checkbox now shows actual configured model name (loaded via `api.getModelAssignments()`). Elapsed timer shows during reasoning: `⚡ Deep reasoning in progress… 47s`.
+
+### Bug Fixes & Extraction Improvements (2026-04-07)
+- **Ollama banner bug:** `/llm/status` threw `TypeError` after model assignments changed from flat strings to `{model, context}` dicts — `assignments.values()` was passed directly to `is_ready(str)`. Fixed to use `cfg["model"]`.
+- **Extraction status fields:** `store_extracted_data()` was hardcoding `status="open"` and omitting `met` — now reads LLM output with validation fallback.
+- **General prompt updated:** Added `status` to actions/risks, `met` to deadlines, STATUS inference rules covering narrative text.
+- **RAID Log prompt updated:** Same status fields, streamlined wording, removed `notes` from dependencies.
+- **Due date display:** `dueDateLabel()` now returns `{label, date, urgent}` — data tables show relative label + actual date as subtitle for overdue/near-future items.
+
+### Dynamic Model Configuration (2026-04-06)
+- Removed all hardcoded model names from codebase
+- `settings.json` `model_assignments` schema: `{extraction, qa, reasoning}` each `{model: str, context: int}`
+- `_normalise_assignment()` backward compat for old flat-string format
+- `num_ctx` per role passed to Ollama `/api/generate` options
+- `GET/POST /settings/model-assignments`, `POST /settings/ollama/pull` endpoints
+- LLM Config tab in SettingsPage: model + context dropdowns per role, pull buttons, installed model list with role badges, RAM warning at 32k ctx
+
+### Table Enhancements (2026-04-06)
+- All 5 data tables: sortable columns (`SortTh` component), CSV export, source document column with file download
+- `frontend/src/lib/tableUtils.tsx`: `SortTh`, `applySort()`, `exportCsv()`, `downloadDocumentFile()`
+- Risks and Dependencies converted from card layout to table layout
+- `GET /documents/{id}/file` backend endpoint (FileResponse)
+
+### Excel All-Sheets (2026-04-06)
+- `_excel_to_markdown()` now iterates all sheets (`wb.sheetnames`), output separated by `## SheetName` headings
+
+### FK Constraint & Duplicate Fixes (2026-04-06)
+- `_seed_system_types()` in `database.py`: idempotent INSERT+UPDATE on every startup
+- `generalId: number | null` in UploadPanel — prevents `typeId=0` FK violation on fresh DB
+- Type_id pre-flight validation in both batch upload endpoints
+- Intake "Load" replaces prior intake entries instead of appending
 
 ### Intake Folder Feature (2026-04-06)
 - `GET/POST/DELETE /settings/intake-folder` endpoints in settings.py
