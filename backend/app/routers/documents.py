@@ -13,6 +13,7 @@ from app.database import get_db
 from app.document_processor import extract_with_type, process_document, store_extracted_data
 from app.llm_service import OllamaUnavailableError, ollama
 from app.models import Document, DocumentType
+from app.vector_service import VectorService
 
 logger = logging.getLogger(__name__)
 
@@ -204,9 +205,6 @@ async def batch_upload_documents(
                 continue
 
             # Persist extracted items and get counts
-            doc.content_text = "\n".join(
-                str(v) for v in extracted.values() if isinstance(v, str)
-            )
             counts = store_extracted_data(extracted, doc.id, db)
 
             results.append({
@@ -499,4 +497,13 @@ def delete_document(doc_id: int, db: Session = Depends(get_db)):
 
     db.delete(doc)
     db.commit()
+
+    # Remove from ChromaDB — non-fatal if it fails
+    vector_service = VectorService(db_path=Path("backend/data"))
+    success = vector_service.delete_document(doc_id)
+    if success:
+        logger.info("Removed document %d from vector store", doc_id)
+    else:
+        logger.warning("Could not remove document %d from vector store", doc_id)
+
     return {"deleted": doc_id}

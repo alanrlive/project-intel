@@ -159,6 +159,18 @@ export interface ModelAssignments {
   reasoning:  RoleAssignment;
 }
 
+export interface VectorStatus {
+  status: 'connected' | 'disconnected';
+  total_docs: number;
+}
+
+export interface RebuildResult {
+  status: 'complete';
+  embedded: number;
+  failed: number;
+  total: number;
+}
+
 export interface LlmStatus {
   ollama_running: boolean;
   ollama_url: string;

@@ -17,6 +17,7 @@ from app.config import (
 )
 from app.database import get_db
 from app.models import Document, DocumentType
+from app.vector_service import VectorService
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -327,3 +328,50 @@ async def pull_ollama_model(body: PullModelBody):
         }
     except Exception as exc:
         return {"success": False, "model": body.model, "error": str(exc)}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Vector index endpoints
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/vector-status", tags=["settings"])
+def get_vector_status():
+    """Return ChromaDB connection status and indexed document count. Never raises."""
+    try:
+        vector_service = VectorService(db_path=Path("backend/data"))
+        return vector_service.get_stats()
+    except Exception:
+        return {"status": "disconnected", "total_docs": 0}
+
+
+@router.post("/rebuild-vector-index", tags=["settings"])
+def rebuild_vector_index(db: Session = Depends(get_db)):
+    """
+    Re-embed all documents with stored content into the ChromaDB vector index.
+    Documents without content_text are skipped.
+    Returns a summary of how many succeeded, failed, and were skipped.
+    """
+    docs = db.query(Document).all()
+    vector_service = VectorService(db_path=Path("backend/data"))
+
+    embedded = 0
+    failed = 0
+    total = len(docs)
+
+    for doc in docs:
+        if not doc.content_text:
+            failed += 1
+            continue
+
+        metadata = {
+            "filename": doc.filename,
+            "upload_date": doc.upload_date.isoformat() if doc.upload_date else "",
+            "document_type_id": doc.document_type_id or 0,
+        }
+        success = vector_service.embed_document(doc.id, doc.content_text, metadata)
+        if success:
+            embedded += 1
+        else:
+            failed += 1
+
+    return {"status": "complete", "embedded": embedded, "failed": failed, "total": total}

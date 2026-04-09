@@ -12,9 +12,11 @@ import type {
   NotificationsResponse,
   OllamaTestResult,
   QueryResponse,
+  RebuildResult,
   Risk,
   ScopeItem,
   UploadResult,
+  VectorStatus,
 } from "@/types";
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
@@ -259,4 +261,11 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     }),
+
+  // ── Settings — Vector search ──────────────────────────────────────────────
+  getVectorStatus: () =>
+    request<VectorStatus>("/settings/vector-status"),
+
+  rebuildVectorIndex: () =>
+    request<RebuildResult>("/settings/rebuild-vector-index", { method: "POST" }),
 };

@@ -4,7 +4,7 @@ import { api } from "@/lib/api";
 import type { DocumentType, ModelAssignments } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 
@@ -303,9 +303,20 @@ function LlmConfigPanel() {
 
   const [pullingModel, setPullingModel] = useState<string | null>(null);
 
+  const [vectorStatus, setVectorStatus]     = useState<"connected" | "disconnected">("disconnected");
+  const [vectorDocCount, setVectorDocCount] = useState(0);
+  const [rebuildingIndex, setRebuildingIndex] = useState(false);
+  const [rebuildResult, setRebuildResult]   = useState<{ embedded: number; total: number } | null>(null);
+
   useEffect(() => {
     testConnection();
     loadAssignments();
+    api.getVectorStatus()
+      .then((s) => {
+        setVectorStatus(s.status === "connected" ? "connected" : "disconnected");
+        setVectorDocCount(s.total_docs);
+      })
+      .catch(() => setVectorStatus("disconnected"));
   }, []);
 
   const testConnection = async () => {
@@ -407,6 +418,22 @@ function LlmConfigPanel() {
       toast("Pull request failed", "error");
     } finally {
       setPullingModel(null);
+    }
+  };
+
+  const handleRebuildIndex = async () => {
+    setRebuildingIndex(true);
+    setRebuildResult(null);
+    try {
+      const result = await api.rebuildVectorIndex();
+      setRebuildResult({ embedded: result.embedded, total: result.total });
+      setVectorDocCount(result.embedded);
+      setVectorStatus("connected");
+      toast(`Index rebuilt: ${result.embedded}/${result.total} documents`, "success");
+    } catch {
+      toast("Failed to rebuild vector index", "error");
+    } finally {
+      setRebuildingIndex(false);
     }
   };
 
@@ -598,6 +625,41 @@ function LlmConfigPanel() {
           ) : (
             <p className="text-xs text-zinc-500">Loading assignments…</p>
           )}
+        </CardContent>
+      </Card>
+
+      {/* ── Vector search ── */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Vector Search</CardTitle>
+          <CardDescription>Semantic document retrieval using ChromaDB</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <div className={cn(
+                "h-2 w-2 rounded-full",
+                vectorStatus === "connected" ? "bg-green-500" : "bg-red-500"
+              )} />
+              <span className="text-sm text-zinc-300">
+                {vectorStatus === "connected"
+                  ? `Connected • ${vectorDocCount} document${vectorDocCount !== 1 ? "s" : ""} indexed`
+                  : "Disconnected"}
+              </span>
+            </div>
+            <Button
+              onClick={handleRebuildIndex}
+              disabled={rebuildingIndex}
+              variant="outline"
+            >
+              {rebuildingIndex ? "Rebuilding…" : "Rebuild Vector Index"}
+            </Button>
+            {rebuildResult && (
+              <p className="text-sm text-zinc-500">
+                Rebuilt: {rebuildResult.embedded}/{rebuildResult.total} documents
+              </p>
+            )}
+          </div>
         </CardContent>
       </Card>
 

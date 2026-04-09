@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.llm_service import OllamaService
 from app.models import Action, Deadline, Dependency, Document, DocumentType, Risk, ScopeItem
+from app.vector_service import VectorService
 
 logger = logging.getLogger(__name__)
 
@@ -244,6 +245,12 @@ async def extract_with_type(
     if not content.strip():
         return {}
 
+    # Persist raw content so vector embedding has something to work with
+    doc = db.query(Document).filter(Document.file_path == str(file_path)).first()
+    if doc and not doc.content_text:
+        doc.content_text = content
+        db.commit()
+
     # Truncate to avoid overwhelming Ollama context window
     max_chars = 12_000
     if len(content) > max_chars:
@@ -348,6 +355,23 @@ def store_extracted_data(extracted: dict, doc_id: int, db: Session) -> dict:
         counts["scope_items"] += 1
 
     db.commit()
+
+    # Embed document content into vector store for semantic search
+    document = db.query(Document).filter(Document.id == doc_id).first()
+    if document and document.content_text:
+        vector_service = VectorService(db_path=Path("backend/data"))
+        metadata = {
+            "filename": document.filename,
+            "upload_date": document.upload_date.isoformat() if document.upload_date else "",
+            "document_type_id": document.document_type_id or 0,
+        }
+        success = vector_service.embed_document(document.id, document.content_text, metadata)
+        if not success:
+            logger.warning(
+                "Failed to embed document %d, vector search unavailable for this doc",
+                document.id,
+            )
+
     return counts
 
 

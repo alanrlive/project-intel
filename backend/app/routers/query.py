@@ -8,7 +8,9 @@ Strategy:
     send to LLM with a grounded prompt, return answer + citations.
 """
 
+import logging
 from datetime import date, timedelta
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -16,7 +18,10 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.llm_service import OllamaUnavailableError, ollama
-from app.models import Action, Deadline, Dependency, Risk, ScopeItem
+from app.models import Action, Deadline, Dependency, Document, Risk, ScopeItem
+from app.vector_service import VectorService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -183,12 +188,44 @@ def _direct(question: str, answer: str, citations: list[Citation], direct: bool)
 
 # ── Context builder for LLM queries ──────────────────────────────────────────
 
-def _build_context(db: Session) -> str:
+_VECTOR_CONTEXT_LIMIT = 8000
+
+
+def _build_context(question: str, db: Session) -> str:
     """
-    Collect a snapshot of current project data as plain text context
-    for the LLM to reason over.
+    Collect project context for the LLM.
+
+    First tries semantic search: embeds the question, retrieves the most
+    relevant source documents from ChromaDB, and returns their content.
+    Falls back to a structured DB snapshot if vector search is unavailable
+    or returns no results.
     """
     today = date.today()
+
+    # ── Semantic search (primary path) ───────────────────────────────────────
+    try:
+        vector_service = VectorService(db_path=Path("backend/data"))
+        doc_ids = vector_service.search_documents(question, n_results=3)
+        if doc_ids:
+            docs = db.query(Document).filter(Document.id.in_(doc_ids)).all()
+            parts: list[str] = [f"Today's date: {today}\n", "RELEVANT DOCUMENTS:\n"]
+            remaining = _VECTOR_CONTEXT_LIMIT
+            for doc in docs:
+                if not doc.content_text or remaining <= 0:
+                    continue
+                snippet = doc.content_text[:remaining]
+                parts.append(f"Document: {doc.filename}\n{snippet}\n")
+                remaining -= len(snippet)
+            context = "\n".join(parts)
+            logger.info(
+                "Vector search returned %d doc(s) for context (%d chars)",
+                len(docs), len(context),
+            )
+            return context
+    except Exception as exc:
+        logger.warning("Vector search failed: %s, falling back to keyword", exc)
+
+    # ── Structured DB snapshot (fallback) ────────────────────────────────────
     sections: list[str] = [f"Today's date: {today}\n"]
 
     # Open actions (limit to most relevant: open + in_progress, due soonest)
@@ -274,7 +311,7 @@ async def query(req: QueryRequest, db: Session = Depends(get_db)):
             return direct
 
     # 2. Build context + call LLM
-    context = _build_context(db)
+    context = _build_context(req.question, db)
     if not context.strip():
         return QueryResponse(
             question=req.question,
