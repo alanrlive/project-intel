@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
-import { Plus, Trash2, FileDown } from "lucide-react";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { Plus, Trash2, FileDown, ChevronDown, ChevronRight } from "lucide-react";
 import { api } from "@/lib/api";
-import type { Risk } from "@/types";
+import type { Risk, Document, RaidItemHistory } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -31,8 +31,22 @@ function sortValue(r: Risk, field: SortField): string | number {
   }
 }
 
+function fmtHistDate(d: string | null): string {
+  if (!d) return "—";
+  return new Date(d).toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+}
+
+function docName(docs: Map<number, Document>, id: number | null): string {
+  if (!id) return "";
+  const name = docs.get(id)?.filename ?? "";
+  return name.length > 22 ? name.slice(0, 21) + "…" : name;
+}
+
 export function RisksTable() {
   const [risks, setRisks]           = useState<Risk[]>([]);
+  const [docs, setDocs]             = useState<Map<number, Document>>(new Map());
+  const [history, setHistory]       = useState<Map<number, RaidItemHistory[]>>(new Map());
+  const [expanded, setExpanded]     = useState<Set<number>>(new Set());
   const [loading, setLoading]       = useState(true);
   const [statusFilter, setStatusFilter] = useState("open");
   const [page, setPage]             = useState(0);
@@ -45,12 +59,33 @@ export function RisksTable() {
 
   const load = async () => {
     setLoading(true);
-    try { setRisks(await api.listRisks(statusFilter || undefined)); }
-    catch { toast("Failed to load risks", "error"); }
+    try {
+      const [data, docList] = await Promise.all([
+        api.listRisks(statusFilter || undefined),
+        api.listDocuments(),
+      ]);
+      setRisks(data);
+      setDocs(new Map(docList.map((d) => [d.id, d])));
+      const histEntries = await Promise.all(
+        data.map(async (r) => {
+          const h = await api.getHistory("risks", r.id).catch(() => []);
+          return [r.id, h] as [number, RaidItemHistory[]];
+        })
+      );
+      setHistory(new Map(histEntries));
+    } catch { toast("Failed to load risks", "error"); }
     finally { setLoading(false); }
   };
 
   useEffect(() => { load(); setPage(0); }, [statusFilter]);
+
+  const toggleExpand = (id: number) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
 
   const onSort = (field: string) => {
     const f = field as SortField;
@@ -104,18 +139,20 @@ export function RisksTable() {
 
   const handleExport = () => {
     const rows = sorted.map((r) => ({
-      description: r.description,
-      impact:      r.impact,
-      likelihood:  r.likelihood,
-      mitigation:  r.mitigation ?? "",
-      status:      r.status,
+      reference_id: r.reference_id ?? "",
+      description:  r.description,
+      impact:       r.impact,
+      likelihood:   r.likelihood,
+      mitigation:   r.mitigation ?? "",
+      status:       r.status,
     }));
     exportCsv(rows, [
-      { key: "description", label: "Description" },
-      { key: "impact",      label: "Impact" },
-      { key: "likelihood",  label: "Likelihood" },
-      { key: "mitigation",  label: "Mitigation" },
-      { key: "status",      label: "Status" },
+      { key: "reference_id", label: "Ref ID" },
+      { key: "description",  label: "Description" },
+      { key: "impact",       label: "Impact" },
+      { key: "likelihood",   label: "Likelihood" },
+      { key: "mitigation",   label: "Mitigation" },
+      { key: "status",       label: "Status" },
     ], `risks_export_${csvDate()}.csv`);
   };
 
@@ -192,48 +229,100 @@ export function RisksTable() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-zinc-700 text-left text-xs text-zinc-500 uppercase tracking-wider">
+                <th className="pb-2 pr-3 font-medium">Ref</th>
                 <th className="pb-2 pr-4 font-medium">Description</th>
                 <SortTh label="Impact"     field="impact"     sortField={sortField} sortDir={sortDir} onSort={onSort} />
                 <SortTh label="Likelihood" field="likelihood" sortField={sortField} sortDir={sortDir} onSort={onSort} />
                 <th className="pb-2 pr-4 font-medium">Mitigation</th>
                 <SortTh label="Status"     field="status"     sortField={sortField} sortDir={sortDir} onSort={onSort} />
+                <th className="pb-2 pr-4 font-medium">History</th>
                 <th className="pb-2 font-medium"></th>
               </tr>
             </thead>
             <tbody>
-              {sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map((r) => (
-                <tr key={r.id} className="border-b border-zinc-800 hover:bg-zinc-800/40">
-                  <td className="py-2.5 pr-4 text-zinc-200 max-w-xs">{r.description}</td>
-                  <td className="py-2.5 pr-4">
-                    <Badge variant={IMPACT_BADGE[r.impact]}>{r.impact}</Badge>
-                  </td>
-                  <td className="py-2.5 pr-4">
-                    <Badge variant={IMPACT_BADGE[r.likelihood]}>{r.likelihood}</Badge>
-                  </td>
-                  <td className="py-2.5 pr-4 text-zinc-400 max-w-[180px]">
-                    <span className="truncate block" title={r.mitigation ?? undefined}>
-                      {r.mitigation ?? <span className="text-zinc-600">—</span>}
-                    </span>
-                  </td>
-                  <td className="py-2.5 pr-4">
-                    <select
-                      value={r.status}
-                      onChange={(e) => updateStatus(r.id, e.target.value as Risk["status"])}
-                      className="bg-zinc-700 border border-zinc-600 text-zinc-300 text-xs rounded px-2 py-1"
-                    >
-                      <option value="open">Open</option>
-                      <option value="mitigated">Mitigated</option>
-                      <option value="accepted">Accepted</option>
-                      <option value="closed">Closed</option>
-                    </select>
-                  </td>
-                  <td className="py-2.5">
-                    <Button size="icon" variant="ghost" onClick={() => deleteRisk(r.id)}>
-                      <Trash2 size={14} className="text-red-400" />
-                    </Button>
-                  </td>
-                </tr>
-              ))}
+              {sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map((r) => {
+                const hist     = history.get(r.id) ?? [];
+                const oldest   = hist[hist.length - 1];
+                const newest   = hist[0];
+                const hasMany  = hist.length > 1;
+                const isExpanded = expanded.has(r.id);
+                return (
+                  <Fragment key={r.id}>
+                    <tr className="border-b border-zinc-800 hover:bg-zinc-800/40">
+                      <td className="py-2.5 pr-3">
+                        {r.reference_id
+                          ? <span className="text-xs font-mono text-zinc-300">{r.reference_id}</span>
+                          : <span className="text-xs font-mono bg-amber-900/40 text-amber-400 border border-amber-700 rounded px-1.5 py-0.5">No ID</span>
+                        }
+                      </td>
+                      <td className="py-2.5 pr-4 text-zinc-200 max-w-xs">{r.description}</td>
+                      <td className="py-2.5 pr-4">
+                        <Badge variant={IMPACT_BADGE[r.impact]}>{r.impact}</Badge>
+                      </td>
+                      <td className="py-2.5 pr-4">
+                        <Badge variant={IMPACT_BADGE[r.likelihood]}>{r.likelihood}</Badge>
+                      </td>
+                      <td className="py-2.5 pr-4 text-zinc-400 max-w-[180px]">
+                        <span className="truncate block" title={r.mitigation ?? undefined}>
+                          {r.mitigation ?? <span className="text-zinc-600">—</span>}
+                        </span>
+                      </td>
+                      <td className="py-2.5 pr-4">
+                        <select
+                          value={r.status}
+                          onChange={(e) => updateStatus(r.id, e.target.value as Risk["status"])}
+                          className="bg-zinc-700 border border-zinc-600 text-zinc-300 text-xs rounded px-2 py-1"
+                        >
+                          <option value="open">Open</option>
+                          <option value="mitigated">Mitigated</option>
+                          <option value="accepted">Accepted</option>
+                          <option value="closed">Closed</option>
+                        </select>
+                      </td>
+                      <td className="py-2.5 pr-4 min-w-[140px]">
+                        <div className="text-xs text-zinc-500 space-y-0.5">
+                          {oldest && (
+                            <div>Created {fmtHistDate(oldest.changed_at)}{oldest.source_document_id ? ` · ${docName(docs, oldest.source_document_id)}` : ""}</div>
+                          )}
+                          {newest && newest !== oldest && (
+                            <div>Updated {fmtHistDate(newest.changed_at)}{newest.source_document_id ? ` · ${docName(docs, newest.source_document_id)}` : ""}</div>
+                          )}
+                        </div>
+                        {hasMany && (
+                          <button
+                            onClick={() => toggleExpand(r.id)}
+                            className="mt-0.5 text-zinc-500 hover:text-zinc-300 flex items-center gap-0.5 text-xs"
+                          >
+                            {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                            <span>{hist.length} entries</span>
+                          </button>
+                        )}
+                      </td>
+                      <td className="py-2.5">
+                        <Button size="icon" variant="ghost" onClick={() => deleteRisk(r.id)}>
+                          <Trash2 size={14} className="text-red-400" />
+                        </Button>
+                      </td>
+                    </tr>
+                    {isExpanded && (
+                      <tr className="bg-zinc-900/60 border-b border-zinc-800">
+                        <td colSpan={8} className="px-4 py-2">
+                          <div className="space-y-1">
+                            {hist.map((h) => (
+                              <div key={h.id} className="flex gap-3 text-xs text-zinc-400">
+                                <span className="text-zinc-500 whitespace-nowrap w-14 shrink-0">{fmtHistDate(h.changed_at)}</span>
+                                <span className="flex-1 truncate">{h.description}</span>
+                                {h.status && <span className="text-zinc-500 shrink-0">{h.status}</span>}
+                                {h.source_document_id && <span className="text-zinc-500 truncate max-w-[140px]">{docs.get(h.source_document_id)?.filename}</span>}
+                              </div>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
           <Pagination total={sorted.length} page={page} onPage={setPage} />

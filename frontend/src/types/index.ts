@@ -15,6 +15,7 @@ export interface Action {
   due_date: string | null;
   status: "open" | "in_progress" | "done" | "blocked";
   priority: "high" | "medium" | "low";
+  reference_id: string | null;
   created_from_doc_id: number | null;
   created_at: string | null;
 }
@@ -26,6 +27,7 @@ export interface Risk {
   likelihood: "high" | "medium" | "low";
   mitigation: string | null;
   status: "open" | "mitigated" | "accepted" | "closed";
+  reference_id: string | null;
   created_at: string | null;
 }
 
@@ -34,6 +36,7 @@ export interface Deadline {
   description: string;
   deadline_date: string;
   met: boolean;
+  reference_id: string | null;
   source_doc_id: number | null;
   created_at: string | null;
 }
@@ -44,6 +47,7 @@ export interface Dependency {
   task_b: string;
   dependency_type: "blocks" | "enables" | "relates_to";
   notes: string | null;
+  reference_id: string | null;
   created_at: string | null;
 }
 
@@ -53,7 +57,19 @@ export interface ScopeItem {
   source: "original_plan" | "original" | "change_request" | "meeting" | "deferred";
   approved: boolean;
   impact_assessment: string | null;
+  reference_id: string | null;
   added_date: string | null;
+}
+
+export interface RaidItemHistory {
+  id: number;
+  item_type: "action" | "risk" | "deadline" | "dependency" | "scope_item";
+  item_id: number;
+  reference_id: string | null;
+  description: string;
+  status: string | null;
+  source_document_id: number | null;
+  changed_at: string | null;
 }
 
 export interface Notification {

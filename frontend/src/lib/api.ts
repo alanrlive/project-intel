@@ -12,6 +12,7 @@ import type {
   NotificationsResponse,
   OllamaTestResult,
   QueryResponse,
+  RaidItemHistory,
   RebuildResult,
   Risk,
   ScopeItem,
@@ -156,6 +157,12 @@ export const api = {
 
   deleteDependency: (id: number) =>
     request<{ deleted: number }>(`/dependencies/${id}`, { method: "DELETE" }),
+
+  // ── History ───────────────────────────────────────────────────────────────
+  getHistory: (
+    itemType: "actions" | "risks" | "deadlines" | "dependencies" | "scope-items",
+    itemId: number,
+  ) => request<RaidItemHistory[]>(`/${itemType}/${itemId}/history`),
 
   // ── Scope Items ───────────────────────────────────────────────────────────
   listScopeItems: (approved?: boolean) =>

@@ -9,7 +9,7 @@ from docx import Document as DocxDocument
 from sqlalchemy.orm import Session
 
 from app.llm_service import OllamaService
-from app.models import Action, Deadline, Dependency, Document, DocumentType, Risk, ScopeItem
+from app.models import Action, Deadline, Dependency, Document, DocumentType, RaidItemHistory, Risk, ScopeItem
 from app.vector_service import VectorService
 
 logger = logging.getLogger(__name__)
@@ -219,6 +219,55 @@ async def run_llm_extraction(content: str, doc_type: str, llm: OllamaService) ->
     return await llm.extract(prompt)
 
 
+# ── Open RAID item context ────────────────────────────────────────────────────
+
+_OPEN_ITEM_CAP = 200
+
+
+def _build_existing_items_context(db: Session) -> str:
+    """
+    Fetch all non-closed RAID items that have a reference_id and format them
+    as a compact reconciliation block to inject into the extraction prompt.
+    Returns an empty string if there are no qualifying items.
+    """
+    lines: list[str] = []
+
+    queries: list[tuple[str, type]] = [
+        ("ACT", Action),
+        ("RSK", Risk),
+        ("DL",  Deadline),
+        ("DEP", Dependency),
+        ("SCP", ScopeItem),
+    ]
+
+    for _prefix, model in queries:
+        # Skip items without a reference_id — no reconciliation possible
+        base = db.query(model).filter(model.reference_id.isnot(None))
+
+        # Filter to non-closed/non-done rows where the model has a status column
+        if hasattr(model, "status"):
+            base = base.filter(model.status.notin_(["done", "closed", "cancelled"]))
+
+        rows = base.limit(_OPEN_ITEM_CAP).all()
+        for row in rows:
+            if len(lines) >= _OPEN_ITEM_CAP:
+                break
+            desc = row.description[:80].replace("\n", " ") if row.description else ""
+            status = getattr(row, "status", "open") or "open"
+            lines.append(f"{row.reference_id} | {desc} | {status}")
+
+    if not lines:
+        return ""
+
+    items_block = "\n".join(lines)
+    return (
+        "\n\nExisting open items:\n"
+        f"{items_block}\n\n"
+        "Where a document references an existing item ID, return that ID in the id field "
+        "so the system can reconcile it. New items with no matching ID should have id: null."
+    )
+
+
 # ── Type-aware extraction ─────────────────────────────────────────────────────
 
 async def extract_with_type(
@@ -260,10 +309,17 @@ async def extract_with_type(
         )
         content = content[:max_chars] + "\n\n[... document truncated ...]"
 
-    prompt = f"{doc_type.extraction_prompt}\n\nDocument content:\n{content}"
+    existing_context = _build_existing_items_context(db)
+    prompt = (
+        f"{doc_type.extraction_prompt}"
+        f"{existing_context}"
+        f"\n\nDocument content:\n{content}"
+    )
 
     # Model, context, and system_prompt come from the extraction role assignment
-    return await llm.extract(prompt)
+    raw_response = await llm.extract(prompt)
+    logger.debug(f"LLM raw response: {raw_response}")
+    return raw_response
 
 
 # ── Date validation ───────────────────────────────────────────────────────────
@@ -279,10 +335,36 @@ def _parse_date(value: str | None) -> date | None:
 
 # ── DB storage ────────────────────────────────────────────────────────────────
 
+def _write_history(
+    db: Session,
+    item_type: str,
+    item_id: int,
+    reference_id: str | None,
+    description: str,
+    status: str | None,
+    source_document_id: int | None,
+) -> None:
+    db.add(RaidItemHistory(
+        item_type=item_type,
+        item_id=item_id,
+        reference_id=reference_id,
+        description=description,
+        status=status,
+        source_document_id=source_document_id,
+    ))
+
+
 def store_extracted_data(extracted: dict, doc_id: int, db: Session) -> dict:
     """
     Persist extracted actions/deadlines/risks/dependencies/scope_items.
-    Returns counts of what was stored.
+
+    Reconciliation by reference_id:
+    - reference_id present + existing row found → update changed fields, write history
+    - reference_id present + no existing row  → insert new, write history
+    - reference_id absent                      → insert new, write history
+
+    Always writes a raid_item_history row on insert or update.
+    Returns counts of rows inserted or updated.
     """
     counts: dict[str, int] = {
         "actions": 0,
@@ -295,63 +377,179 @@ def store_extracted_data(extracted: dict, doc_id: int, db: Session) -> dict:
     _valid_action_status = {"open", "done", "cancelled"}
     _valid_risk_status   = {"open", "closed"}
 
+    # ── Actions ───────────────────────────────────────────────────────────────
     for item in extracted.get("actions", []):
         if not item.get("description"):
             continue
+        ref_id     = item.get("id") or None
         raw_status = item.get("status", "open")
-        db.add(Action(
-            description=item["description"],
-            owner=item.get("owner"),
-            due_date=_parse_date(item.get("due_date")),
-            priority=item.get("priority", "medium"),
-            status=raw_status if raw_status in _valid_action_status else "open",
-            created_from_doc_id=doc_id,
-        ))
+        status     = raw_status if raw_status in _valid_action_status else "open"
+
+        existing: Action | None = (
+            db.query(Action).filter(Action.reference_id == ref_id).first()
+            if ref_id else None
+        )
+
+        if existing:
+            incoming_desc = item["description"]
+            if len(incoming_desc) >= len(existing.description):
+                existing.description = incoming_desc
+            existing.status   = status
+            existing.owner    = item.get("owner") or existing.owner
+            existing.due_date = _parse_date(item.get("due_date")) or existing.due_date
+            existing.priority = item.get("priority") or existing.priority
+            row_id = existing.id
+        else:
+            row = Action(
+                description=item["description"],
+                owner=item.get("owner"),
+                due_date=_parse_date(item.get("due_date")),
+                priority=item.get("priority", "medium"),
+                status=status,
+                reference_id=ref_id,
+                created_from_doc_id=doc_id,
+            )
+            db.add(row)
+            db.flush()  # populate row.id
+            row_id = row.id
+
+        _write_history(db, "action", row_id, ref_id, item["description"], status, doc_id)
         counts["actions"] += 1
 
+    # ── Deadlines ─────────────────────────────────────────────────────────────
     for item in extracted.get("deadlines", []):
         dl = _parse_date(item.get("deadline_date"))
         if not item.get("description") or not dl:
             continue
-        db.add(Deadline(
-            description=item["description"],
-            deadline_date=dl,
-            met=bool(item.get("met", False)),
-            source_doc_id=doc_id,
-        ))
+        ref_id = item.get("id") or None
+        met    = bool(item.get("met", False))
+
+        existing: Deadline | None = (
+            db.query(Deadline).filter(Deadline.reference_id == ref_id).first()
+            if ref_id else None
+        )
+
+        if existing:
+            incoming_desc = item["description"]
+            if len(incoming_desc) >= len(existing.description):
+                existing.description = incoming_desc
+            existing.deadline_date = dl
+            existing.met           = met
+            row_id = existing.id
+        else:
+            row = Deadline(
+                description=item["description"],
+                deadline_date=dl,
+                met=met,
+                reference_id=ref_id,
+                source_doc_id=doc_id,
+            )
+            db.add(row)
+            db.flush()
+            row_id = row.id
+
+        _write_history(db, "deadline", row_id, ref_id, item["description"], "met" if met else "open", doc_id)
         counts["deadlines"] += 1
 
+    # ── Risks ─────────────────────────────────────────────────────────────────
     for item in extracted.get("risks", []):
         if not item.get("description"):
             continue
+        ref_id     = item.get("id") or None
         raw_status = item.get("status", "open")
-        db.add(Risk(
-            description=item["description"],
-            impact=item.get("impact", "medium"),
-            likelihood=item.get("likelihood", "medium"),
-            mitigation=item.get("mitigation"),
-            status=raw_status if raw_status in _valid_risk_status else "open",
-        ))
+        status     = raw_status if raw_status in _valid_risk_status else "open"
+
+        existing: Risk | None = (
+            db.query(Risk).filter(Risk.reference_id == ref_id).first()
+            if ref_id else None
+        )
+
+        if existing:
+            incoming_desc = item["description"]
+            if len(incoming_desc) >= len(existing.description):
+                existing.description = incoming_desc
+            existing.status     = status
+            existing.impact     = item.get("impact") or existing.impact
+            existing.likelihood = item.get("likelihood") or existing.likelihood
+            existing.mitigation = item.get("mitigation") or existing.mitigation
+            row_id = existing.id
+        else:
+            row = Risk(
+                description=item["description"],
+                impact=item.get("impact", "medium"),
+                likelihood=item.get("likelihood", "medium"),
+                mitigation=item.get("mitigation"),
+                status=status,
+                reference_id=ref_id,
+            )
+            db.add(row)
+            db.flush()
+            row_id = row.id
+
+        _write_history(db, "risk", row_id, ref_id, item["description"], status, doc_id)
         counts["risks"] += 1
 
+    # ── Dependencies ──────────────────────────────────────────────────────────
     for item in extracted.get("dependencies", []):
         if not item.get("task_a") or not item.get("task_b"):
             continue
-        db.add(Dependency(
-            task_a=item["task_a"],
-            task_b=item["task_b"],
-            dependency_type=item.get("dependency_type", "relates_to"),
-        ))
+        ref_id = item.get("id") or None
+        dep_type = item.get("dependency_type", "relates_to")
+
+        existing: Dependency | None = (
+            db.query(Dependency).filter(Dependency.reference_id == ref_id).first()
+            if ref_id else None
+        )
+
+        if existing:
+            existing.task_a          = item["task_a"]
+            existing.task_b          = item["task_b"]
+            existing.dependency_type = dep_type
+            row_id = existing.id
+        else:
+            row = Dependency(
+                task_a=item["task_a"],
+                task_b=item["task_b"],
+                dependency_type=dep_type,
+                reference_id=ref_id,
+            )
+            db.add(row)
+            db.flush()
+            row_id = row.id
+
+        description = f"{item['task_a']} {dep_type} {item['task_b']}"
+        _write_history(db, "dependency", row_id, ref_id, description, None, doc_id)
         counts["dependencies"] += 1
 
+    # ── Scope items ───────────────────────────────────────────────────────────
     for item in extracted.get("scope_items", []):
         if not item.get("description"):
             continue
-        db.add(ScopeItem(
-            description=item["description"],
-            source=item.get("source", "meeting"),
-            approved=False,
-        ))
+        ref_id = item.get("id") or None
+
+        existing: ScopeItem | None = (
+            db.query(ScopeItem).filter(ScopeItem.reference_id == ref_id).first()
+            if ref_id else None
+        )
+
+        if existing:
+            incoming_desc = item["description"]
+            if len(incoming_desc) >= len(existing.description):
+                existing.description = incoming_desc
+            existing.source = item.get("source") or existing.source
+            row_id = existing.id
+        else:
+            row = ScopeItem(
+                description=item["description"],
+                source=item.get("source", "meeting"),
+                approved=False,
+                reference_id=ref_id,
+            )
+            db.add(row)
+            db.flush()
+            row_id = row.id
+
+        _write_history(db, "scope_item", row_id, ref_id, item["description"], None, doc_id)
         counts["scope_items"] += 1
 
     db.commit()

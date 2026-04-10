@@ -46,6 +46,7 @@ class Action(Base):
     due_date: Mapped[date | None] = mapped_column(Date)
     status: Mapped[str] = mapped_column(String, default="open")  # open|in_progress|done|blocked
     priority: Mapped[str | None] = mapped_column(String)  # high|medium|low
+    reference_id: Mapped[str | None] = mapped_column(String)  # e.g. "ACT-001"
     created_from_doc_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("documents.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
@@ -66,6 +67,7 @@ class Risk(Base):
     likelihood: Mapped[str | None] = mapped_column(String)  # high|medium|low
     mitigation: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String, default="open")  # open|mitigated|accepted|closed
+    reference_id: Mapped[str | None] = mapped_column(String)  # e.g. "RSK-001"
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
@@ -77,6 +79,7 @@ class Dependency(Base):
     task_b: Mapped[str] = mapped_column(Text, nullable=False)
     dependency_type: Mapped[str | None] = mapped_column(String)  # blocks|enables|relates_to
     notes: Mapped[str | None] = mapped_column(Text)
+    reference_id: Mapped[str | None] = mapped_column(String)  # e.g. "DEP-001"
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
@@ -87,6 +90,7 @@ class Deadline(Base):
     description: Mapped[str] = mapped_column(Text, nullable=False)
     deadline_date: Mapped[date] = mapped_column(Date, nullable=False)
     met: Mapped[bool] = mapped_column(Boolean, default=False)
+    reference_id: Mapped[str | None] = mapped_column(String)  # e.g. "DL-001"
     source_doc_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("documents.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
@@ -104,6 +108,25 @@ class ScopeItem(Base):
     source: Mapped[str | None] = mapped_column(String)  # original_plan|change_request|meeting
     approved: Mapped[bool] = mapped_column(Boolean, default=False)
     impact_assessment: Mapped[str | None] = mapped_column(Text)
+    reference_id: Mapped[str | None] = mapped_column(String)  # e.g. "SCP-001"
+
+
+class RaidItemHistory(Base):
+    __tablename__ = "raid_item_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    item_type: Mapped[str] = mapped_column(String, nullable=False)  # action|risk|deadline|dependency|scope_item
+    item_id: Mapped[int] = mapped_column(Integer, nullable=False)   # row id in the relevant table (no FK — multi-table)
+    reference_id: Mapped[str | None] = mapped_column(String)        # e.g. "ACT-001"
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str | None] = mapped_column(String)
+    source_document_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("documents.id"))
+    changed_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_raid_history_item", "item_type", "item_id"),
+        Index("idx_raid_history_changed_at", "changed_at"),
+    )
 
 
 class Notification(Base):

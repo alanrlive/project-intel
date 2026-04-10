@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
-import { Plus, Trash2, CheckCircle, FileDown } from "lucide-react";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { Plus, Trash2, CheckCircle, FileDown, ChevronDown, ChevronRight } from "lucide-react";
 import { api } from "@/lib/api";
-import type { ScopeItem } from "@/types";
+import type { ScopeItem, Document, RaidItemHistory } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -39,8 +39,22 @@ function sortValue(s: ScopeItem, field: SortField): string | number | boolean {
   }
 }
 
+function fmtHistDate(d: string | null): string {
+  if (!d) return "—";
+  return new Date(d).toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+}
+
+function docName(docs: Map<number, Document>, id: number | null): string {
+  if (!id) return "";
+  const name = docs.get(id)?.filename ?? "";
+  return name.length > 22 ? name.slice(0, 21) + "…" : name;
+}
+
 export function ScopeTable() {
   const [items, setItems]           = useState<ScopeItem[]>([]);
+  const [docs, setDocs]             = useState<Map<number, Document>>(new Map());
+  const [history, setHistory]       = useState<Map<number, RaidItemHistory[]>>(new Map());
+  const [expanded, setExpanded]     = useState<Set<number>>(new Set());
   const [loading, setLoading]       = useState(true);
   const [page, setPage]             = useState(0);
   const [approvedFilter, setApprovedFilter] = useState<"" | "true" | "false">("");
@@ -55,12 +69,32 @@ export function ScopeTable() {
     setLoading(true);
     try {
       const approved = approvedFilter === "" ? undefined : approvedFilter === "true";
-      setItems(await api.listScopeItems(approved));
+      const [data, docList] = await Promise.all([
+        api.listScopeItems(approved),
+        api.listDocuments(),
+      ]);
+      setItems(data);
+      setDocs(new Map(docList.map((d) => [d.id, d])));
+      const histEntries = await Promise.all(
+        data.map(async (s) => {
+          const h = await api.getHistory("scope-items", s.id).catch(() => []);
+          return [s.id, h] as [number, RaidItemHistory[]];
+        })
+      );
+      setHistory(new Map(histEntries));
     } catch { toast("Failed to load scope items", "error"); }
     finally { setLoading(false); }
   };
 
   useEffect(() => { load(); setPage(0); }, [approvedFilter]);
+
+  const toggleExpand = (id: number) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
 
   const onSort = (field: string) => {
     const f = field as SortField;
@@ -114,6 +148,7 @@ export function ScopeTable() {
 
   const handleExport = () => {
     const rows = sorted.map((s) => ({
+      reference_id:      s.reference_id ?? "",
       description:       s.description,
       source:            s.source.replace("_", " "),
       approved:          s.approved ? "Yes" : "No",
@@ -121,6 +156,7 @@ export function ScopeTable() {
       added_date:        s.added_date ?? "",
     }));
     exportCsv(rows, [
+      { key: "reference_id",      label: "Ref ID" },
       { key: "description",       label: "Description" },
       { key: "source",            label: "Origin" },
       { key: "approved",          label: "Approved" },
@@ -195,52 +231,104 @@ export function ScopeTable() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-zinc-700 text-left text-xs text-zinc-500 uppercase tracking-wider">
+                <th className="pb-2 pr-3 font-medium">Ref</th>
                 <th className="pb-2 pr-4 font-medium">Description</th>
                 <SortTh label="Origin"   field="source"     sortField={sortField} sortDir={sortDir} onSort={onSort} />
                 <SortTh label="Approved" field="approved"   sortField={sortField} sortDir={sortDir} onSort={onSort} />
                 <th className="pb-2 pr-4 font-medium">Impact</th>
                 <SortTh label="Added"    field="added_date" sortField={sortField} sortDir={sortDir} onSort={onSort} />
+                <th className="pb-2 pr-4 font-medium">History</th>
                 <th className="pb-2 font-medium"></th>
               </tr>
             </thead>
             <tbody>
-              {sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map((s) => (
-                <tr key={s.id} className="border-b border-zinc-800 hover:bg-zinc-800/40">
-                  <td className="py-2.5 pr-4 text-zinc-200 max-w-xs">{s.description}</td>
-                  <td className="py-2.5 pr-4">
-                    <Badge variant={SOURCE_BADGE[s.source]}>
-                      {s.source.replace("_", " ")}
-                    </Badge>
-                  </td>
-                  <td className="py-2.5 pr-4">
-                    <Badge variant={s.approved ? "success" : "warning"}>
-                      {s.approved ? "Approved" : "Pending"}
-                    </Badge>
-                  </td>
-                  <td className="py-2.5 pr-4 text-zinc-400 max-w-[180px]">
-                    <span className="truncate block" title={s.impact_assessment ?? undefined}>
-                      {s.impact_assessment ?? <span className="text-zinc-600">—</span>}
-                    </span>
-                  </td>
-                  <td className="py-2.5 pr-4 text-zinc-400 whitespace-nowrap">
-                    {formatDate(s.added_date)}
-                  </td>
-                  <td className="py-2.5">
-                    <div className="flex gap-1">
-                      <Button
-                        size="icon" variant="ghost"
-                        title={s.approved ? "Revoke approval" : "Approve"}
-                        onClick={() => toggleApproved(s.id, !s.approved)}
-                      >
-                        <CheckCircle size={14} className={s.approved ? "text-zinc-500" : "text-emerald-400"} />
-                      </Button>
-                      <Button size="icon" variant="ghost" onClick={() => deleteItem(s.id)}>
-                        <Trash2 size={14} className="text-red-400" />
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map((s) => {
+                const hist     = history.get(s.id) ?? [];
+                const oldest   = hist[hist.length - 1];
+                const newest   = hist[0];
+                const hasMany  = hist.length > 1;
+                const isExpanded = expanded.has(s.id);
+                return (
+                  <Fragment key={s.id}>
+                    <tr className="border-b border-zinc-800 hover:bg-zinc-800/40">
+                      <td className="py-2.5 pr-3">
+                        {s.reference_id
+                          ? <span className="text-xs font-mono text-zinc-300">{s.reference_id}</span>
+                          : <span className="text-xs font-mono bg-amber-900/40 text-amber-400 border border-amber-700 rounded px-1.5 py-0.5">No ID</span>
+                        }
+                      </td>
+                      <td className="py-2.5 pr-4 text-zinc-200 max-w-xs">{s.description}</td>
+                      <td className="py-2.5 pr-4">
+                        <Badge variant={SOURCE_BADGE[s.source]}>
+                          {s.source.replace("_", " ")}
+                        </Badge>
+                      </td>
+                      <td className="py-2.5 pr-4">
+                        <Badge variant={s.approved ? "success" : "warning"}>
+                          {s.approved ? "Approved" : "Pending"}
+                        </Badge>
+                      </td>
+                      <td className="py-2.5 pr-4 text-zinc-400 max-w-[180px]">
+                        <span className="truncate block" title={s.impact_assessment ?? undefined}>
+                          {s.impact_assessment ?? <span className="text-zinc-600">—</span>}
+                        </span>
+                      </td>
+                      <td className="py-2.5 pr-4 text-zinc-400 whitespace-nowrap">
+                        {formatDate(s.added_date)}
+                      </td>
+                      <td className="py-2.5 pr-4 min-w-[140px]">
+                        <div className="text-xs text-zinc-500 space-y-0.5">
+                          {oldest && (
+                            <div>Created {fmtHistDate(oldest.changed_at)}{oldest.source_document_id ? ` · ${docName(docs, oldest.source_document_id)}` : ""}</div>
+                          )}
+                          {newest && newest !== oldest && (
+                            <div>Updated {fmtHistDate(newest.changed_at)}{newest.source_document_id ? ` · ${docName(docs, newest.source_document_id)}` : ""}</div>
+                          )}
+                        </div>
+                        {hasMany && (
+                          <button
+                            onClick={() => toggleExpand(s.id)}
+                            className="mt-0.5 text-zinc-500 hover:text-zinc-300 flex items-center gap-0.5 text-xs"
+                          >
+                            {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                            <span>{hist.length} entries</span>
+                          </button>
+                        )}
+                      </td>
+                      <td className="py-2.5">
+                        <div className="flex gap-1">
+                          <Button
+                            size="icon" variant="ghost"
+                            title={s.approved ? "Revoke approval" : "Approve"}
+                            onClick={() => toggleApproved(s.id, !s.approved)}
+                          >
+                            <CheckCircle size={14} className={s.approved ? "text-zinc-500" : "text-emerald-400"} />
+                          </Button>
+                          <Button size="icon" variant="ghost" onClick={() => deleteItem(s.id)}>
+                            <Trash2 size={14} className="text-red-400" />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                    {isExpanded && (
+                      <tr className="bg-zinc-900/60 border-b border-zinc-800">
+                        <td colSpan={8} className="px-4 py-2">
+                          <div className="space-y-1">
+                            {hist.map((h) => (
+                              <div key={h.id} className="flex gap-3 text-xs text-zinc-400">
+                                <span className="text-zinc-500 whitespace-nowrap w-14 shrink-0">{fmtHistDate(h.changed_at)}</span>
+                                <span className="flex-1 truncate">{h.description}</span>
+                                {h.status && <span className="text-zinc-500 shrink-0">{h.status}</span>}
+                                {h.source_document_id && <span className="text-zinc-500 truncate max-w-[140px]">{docs.get(h.source_document_id)?.filename}</span>}
+                              </div>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
           <Pagination total={sorted.length} page={page} onPage={setPage} />

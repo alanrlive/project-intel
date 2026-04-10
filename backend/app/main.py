@@ -1,7 +1,10 @@
+import logging
 from contextlib import asynccontextmanager
 from datetime import datetime
 
 from fastapi import FastAPI
+
+logging.basicConfig(level=logging.DEBUG)
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings

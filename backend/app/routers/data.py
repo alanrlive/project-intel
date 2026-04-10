@@ -11,9 +11,22 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Action, Deadline, Dependency, Risk, ScopeItem
+from app.models import Action, Deadline, Dependency, RaidItemHistory, Risk, ScopeItem
 
 router = APIRouter()
+
+
+def _history_dict(h: RaidItemHistory) -> dict:
+    return {
+        "id": h.id,
+        "item_type": h.item_type,
+        "item_id": h.item_id,
+        "reference_id": h.reference_id,
+        "description": h.description,
+        "status": h.status,
+        "source_document_id": h.source_document_id,
+        "changed_at": h.changed_at.isoformat() if h.changed_at else None,
+    }
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -44,6 +57,7 @@ def _action_dict(a: Action) -> dict:
         "due_date": a.due_date.isoformat() if a.due_date else None,
         "status": a.status,
         "priority": a.priority,
+        "reference_id": a.reference_id,
         "created_from_doc_id": a.created_from_doc_id,
         "created_at": a.created_at.isoformat() if a.created_at else None,
     }
@@ -96,6 +110,19 @@ def delete_action(action_id: int, db: Session = Depends(get_db)):
     return {"deleted": action_id}
 
 
+@router.get("/actions/{action_id}/history", tags=["actions"])
+def get_action_history(action_id: int, db: Session = Depends(get_db)):
+    if not db.query(Action).filter(Action.id == action_id).first():
+        raise HTTPException(status_code=404, detail="Action not found.")
+    rows = (
+        db.query(RaidItemHistory)
+        .filter(RaidItemHistory.item_type == "action", RaidItemHistory.item_id == action_id)
+        .order_by(RaidItemHistory.changed_at.desc())
+        .all()
+    )
+    return [_history_dict(h) for h in rows]
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # RISKS
 # ══════════════════════════════════════════════════════════════════════════════
@@ -124,6 +151,7 @@ def _risk_dict(r: Risk) -> dict:
         "likelihood": r.likelihood,
         "mitigation": r.mitigation,
         "status": r.status,
+        "reference_id": r.reference_id,
         "created_at": r.created_at.isoformat() if r.created_at else None,
     }
 
@@ -168,6 +196,19 @@ def delete_risk(risk_id: int, db: Session = Depends(get_db)):
     return {"deleted": risk_id}
 
 
+@router.get("/risks/{risk_id}/history", tags=["risks"])
+def get_risk_history(risk_id: int, db: Session = Depends(get_db)):
+    if not db.query(Risk).filter(Risk.id == risk_id).first():
+        raise HTTPException(status_code=404, detail="Risk not found.")
+    rows = (
+        db.query(RaidItemHistory)
+        .filter(RaidItemHistory.item_type == "risk", RaidItemHistory.item_id == risk_id)
+        .order_by(RaidItemHistory.changed_at.desc())
+        .all()
+    )
+    return [_history_dict(h) for h in rows]
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # DEADLINES
 # ══════════════════════════════════════════════════════════════════════════════
@@ -190,6 +231,7 @@ def _deadline_dict(d: Deadline) -> dict:
         "description": d.description,
         "deadline_date": d.deadline_date.isoformat() if d.deadline_date else None,
         "met": d.met,
+        "reference_id": d.reference_id,
         "source_doc_id": d.source_doc_id,
         "created_at": d.created_at.isoformat() if d.created_at else None,
     }
@@ -235,6 +277,19 @@ def delete_deadline(deadline_id: int, db: Session = Depends(get_db)):
     return {"deleted": deadline_id}
 
 
+@router.get("/deadlines/{deadline_id}/history", tags=["deadlines"])
+def get_deadline_history(deadline_id: int, db: Session = Depends(get_db)):
+    if not db.query(Deadline).filter(Deadline.id == deadline_id).first():
+        raise HTTPException(status_code=404, detail="Deadline not found.")
+    rows = (
+        db.query(RaidItemHistory)
+        .filter(RaidItemHistory.item_type == "deadline", RaidItemHistory.item_id == deadline_id)
+        .order_by(RaidItemHistory.changed_at.desc())
+        .all()
+    )
+    return [_history_dict(h) for h in rows]
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # DEPENDENCIES
 # ══════════════════════════════════════════════════════════════════════════════
@@ -258,6 +313,7 @@ def _dep_dict(d: Dependency) -> dict:
         "task_b": d.task_b,
         "dependency_type": d.dependency_type,
         "notes": d.notes,
+        "reference_id": d.reference_id,
         "created_at": d.created_at.isoformat() if d.created_at else None,
     }
 
@@ -299,6 +355,19 @@ def delete_dependency(dep_id: int, db: Session = Depends(get_db)):
     return {"deleted": dep_id}
 
 
+@router.get("/dependencies/{dep_id}/history", tags=["dependencies"])
+def get_dependency_history(dep_id: int, db: Session = Depends(get_db)):
+    if not db.query(Dependency).filter(Dependency.id == dep_id).first():
+        raise HTTPException(status_code=404, detail="Dependency not found.")
+    rows = (
+        db.query(RaidItemHistory)
+        .filter(RaidItemHistory.item_type == "dependency", RaidItemHistory.item_id == dep_id)
+        .order_by(RaidItemHistory.changed_at.desc())
+        .all()
+    )
+    return [_history_dict(h) for h in rows]
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # SCOPE ITEMS
 # ══════════════════════════════════════════════════════════════════════════════
@@ -324,6 +393,7 @@ def _scope_dict(s: ScopeItem) -> dict:
         "source": s.source,
         "approved": s.approved,
         "impact_assessment": s.impact_assessment,
+        "reference_id": s.reference_id,
         "added_date": s.added_date.isoformat() if s.added_date else None,
     }
 
@@ -366,3 +436,16 @@ def delete_scope_item(item_id: int, db: Session = Depends(get_db)):
     db.delete(item)
     db.commit()
     return {"deleted": item_id}
+
+
+@router.get("/scope-items/{item_id}/history", tags=["scope"])
+def get_scope_item_history(item_id: int, db: Session = Depends(get_db)):
+    if not db.query(ScopeItem).filter(ScopeItem.id == item_id).first():
+        raise HTTPException(status_code=404, detail="Scope item not found.")
+    rows = (
+        db.query(RaidItemHistory)
+        .filter(RaidItemHistory.item_type == "scope_item", RaidItemHistory.item_id == item_id)
+        .order_by(RaidItemHistory.changed_at.desc())
+        .all()
+    )
+    return [_history_dict(h) for h in rows]
