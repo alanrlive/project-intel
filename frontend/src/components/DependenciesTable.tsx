@@ -35,10 +35,9 @@ function fmtHistDate(d: string | null): string {
   return new Date(d).toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
 }
 
-function docName(docs: Map<number, Document>, id: number | null): string {
-  if (!id) return "";
-  const name = docs.get(id)?.filename ?? "";
-  return name.length > 22 ? name.slice(0, 21) + "…" : name;
+function snippetDesc(desc: string | null): string {
+  if (!desc) return "";
+  return desc.length > 60 ? desc.slice(0, 60) + "…" : desc;
 }
 
 export function DependenciesTable() {
@@ -250,16 +249,16 @@ export function DependenciesTable() {
                       <td className="py-2.5 pr-4 min-w-[140px]">
                         <div className="text-xs text-zinc-500 space-y-0.5">
                           {oldest && (
-                            <div>Created {fmtHistDate(oldest.changed_at)}{oldest.source_document_id ? ` · ${docName(docs, oldest.source_document_id)}` : ""}</div>
+                            <div>Created {fmtHistDate(oldest.changed_at)}{oldest.description ? ` · ${snippetDesc(oldest.description)}` : ""}</div>
                           )}
                           {newest && newest !== oldest && (
-                            <div>Updated {fmtHistDate(newest.changed_at)}{newest.source_document_id ? ` · ${docName(docs, newest.source_document_id)}` : ""}</div>
+                            <div>Updated {fmtHistDate(newest.changed_at)}{newest.description ? ` · ${snippetDesc(newest.description)}` : ""}</div>
                           )}
                         </div>
                         {hasMany && (
                           <button
                             onClick={() => toggleExpand(d.id)}
-                            className="mt-0.5 text-zinc-500 hover:text-zinc-300 flex items-center gap-0.5 text-xs"
+                            className="mt-0.5 flex items-center gap-1 text-xs text-gray-400 cursor-pointer hover:text-gray-200"
                           >
                             {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                             <span>{hist.length} entries</span>

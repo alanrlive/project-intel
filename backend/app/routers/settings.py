@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.config import (
     get_settings, read_app_config, write_app_config,
     get_model_assignments, write_model_assignments, DEFAULT_SYSTEM_PROMPTS,
+    get_llm_logging, set_llm_logging,
 )
 from app.database import get_db
 from app.models import Document, DocumentType
@@ -328,6 +329,27 @@ async def pull_ollama_model(body: PullModelBody):
         }
     except Exception as exc:
         return {"success": False, "model": body.model, "error": str(exc)}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# LLM logging endpoints
+# ══════════════════════════════════════════════════════════════════════════════
+
+class LlmLoggingBody(BaseModel):
+    enabled: bool
+
+
+@router.get("/llm-logging", tags=["settings"])
+def get_llm_logging_status():
+    """Return whether LLM response logging is currently enabled."""
+    return {"enabled": get_llm_logging()}
+
+
+@router.post("/llm-logging", tags=["settings"])
+def set_llm_logging_status(body: LlmLoggingBody):
+    """Enable or disable LLM response logging to disk."""
+    set_llm_logging(body.enabled)
+    return {"enabled": body.enabled}
 
 
 # ══════════════════════════════════════════════════════════════════════════════

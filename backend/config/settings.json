@@ -16,5 +16,6 @@
       "context": 16384,
       "system_prompt": "You are a strategic project analyst. Provide deep analysis of scope, risks, dependencies, and project health. Show your reasoning process and highlight patterns or concerns the team should be aware of."
     }
-  }
+  },
+  "llm_logging_enabled": true
 }

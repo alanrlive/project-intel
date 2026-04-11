@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Plus, Trash2, CheckCircle, Download, FileDown, ChevronDown, ChevronRight } from "lucide-react";
+import { Plus, Trash2, CheckCircle, FileDown, ChevronDown, ChevronRight } from "lucide-react";
 import { api } from "@/lib/api";
 import type { Deadline, Document, RaidItemHistory } from "@/types";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,7 @@ import { dueDateLabel } from "@/lib/utils";
 import { Pagination, PAGE_SIZE } from "@/components/ui/pagination";
 import {
   SortTh, SortDir, nextDir, applySort,
-  exportCsv, csvDate, downloadDocumentFile,
+  exportCsv, csvDate,
 } from "@/lib/tableUtils";
 
 type SortField = "deadline_date" | "met";
@@ -27,10 +27,9 @@ function fmtHistDate(d: string | null): string {
   return new Date(d).toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
 }
 
-function docName(docs: Map<number, Document>, id: number | null): string {
-  if (!id) return "";
-  const name = docs.get(id)?.filename ?? "";
-  return name.length > 22 ? name.slice(0, 21) + "…" : name;
+function snippetDesc(desc: string | null): string {
+  if (!desc) return "";
+  return desc.length > 60 ? desc.slice(0, 60) + "…" : desc;
 }
 
 export function DeadlinesTable() {
@@ -202,7 +201,6 @@ export function DeadlinesTable() {
                 <th className="pb-2 pr-4 font-medium">Description</th>
                 <SortTh label="Date"   field="deadline_date" sortField={sortField} sortDir={sortDir} onSort={onSort} />
                 <SortTh label="Status" field="met"           sortField={sortField} sortDir={sortDir} onSort={onSort} />
-                <th className="pb-2 pr-4 font-medium">Document</th>
                 <th className="pb-2 pr-4 font-medium">History</th>
                 <th className="pb-2 font-medium"></th>
               </tr>
@@ -210,7 +208,6 @@ export function DeadlinesTable() {
             <tbody>
               {sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map((d) => {
                 const due      = dueDateLabel(d.deadline_date);
-                const srcDoc   = d.source_doc_id ? docs.get(d.source_doc_id) : undefined;
                 const hist     = history.get(d.id) ?? [];
                 const oldest   = hist[hist.length - 1];
                 const newest   = hist[0];
@@ -241,36 +238,19 @@ export function DeadlinesTable() {
                           {d.met ? "Met" : "Pending"}
                         </Badge>
                       </td>
-                      <td className="py-2.5 pr-4 max-w-[140px]">
-                        {srcDoc ? (
-                          <button
-                            onClick={async () => {
-                              try { await downloadDocumentFile(srcDoc.id, srcDoc.filename); }
-                              catch { toast("Could not download file", "error"); }
-                            }}
-                            className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 truncate max-w-full"
-                            title={`Download ${srcDoc.filename}`}
-                          >
-                            <Download size={11} className="shrink-0" />
-                            <span className="truncate">{srcDoc.filename}</span>
-                          </button>
-                        ) : (
-                          <span className="text-zinc-600 text-xs">—</span>
-                        )}
-                      </td>
                       <td className="py-2.5 pr-4 min-w-[140px]">
                         <div className="text-xs text-zinc-500 space-y-0.5">
                           {oldest && (
-                            <div>Created {fmtHistDate(oldest.changed_at)}{oldest.source_document_id ? ` · ${docName(docs, oldest.source_document_id)}` : ""}</div>
+                            <div>Created {fmtHistDate(oldest.changed_at)}{oldest.description ? ` · ${snippetDesc(oldest.description)}` : ""}</div>
                           )}
                           {newest && newest !== oldest && (
-                            <div>Updated {fmtHistDate(newest.changed_at)}{newest.source_document_id ? ` · ${docName(docs, newest.source_document_id)}` : ""}</div>
+                            <div>Updated {fmtHistDate(newest.changed_at)}{newest.description ? ` · ${snippetDesc(newest.description)}` : ""}</div>
                           )}
                         </div>
                         {hasMany && (
                           <button
                             onClick={() => toggleExpand(d.id)}
-                            className="mt-0.5 text-zinc-500 hover:text-zinc-300 flex items-center gap-0.5 text-xs"
+                            className="mt-0.5 flex items-center gap-1 text-xs text-gray-400 cursor-pointer hover:text-gray-200"
                           >
                             {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                             <span>{hist.length} entries</span>
@@ -294,7 +274,7 @@ export function DeadlinesTable() {
                     </tr>
                     {isExpanded && (
                       <tr className="bg-zinc-900/60 border-b border-zinc-800">
-                        <td colSpan={7} className="px-4 py-2">
+                        <td colSpan={6} className="px-4 py-2">
                           <div className="space-y-1">
                             {hist.map((h) => (
                               <div key={h.id} className="flex gap-3 text-xs text-zinc-400">

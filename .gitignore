@@ -16,6 +16,7 @@ backend/*.egg-info/
 
 # ── Backend data (database, uploads, logs) ────────────────────────────────────
 backend/data/
+backend/logs/
 backend/uvicorn.log
 
 # ── Node / frontend ───────────────────────────────────────────────────────────

@@ -7,6 +7,7 @@ from pydantic_settings import BaseSettings
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 UPLOADS_DIR = DATA_DIR / "uploads"
+LOGS_DIR = BASE_DIR / "logs"
 CONFIG_DIR = BASE_DIR / "config"
 APP_CONFIG_FILE = CONFIG_DIR / "settings.json"
 
@@ -140,6 +141,18 @@ def get_model_assignments() -> dict:
                 "timeout":       _DEFAULT_TIMEOUTS[role],
             }
     return result
+
+
+def get_llm_logging() -> bool:
+    """Return whether LLM response logging is enabled."""
+    return bool(read_app_config().get("llm_logging_enabled", False))
+
+
+def set_llm_logging(enabled: bool) -> None:
+    """Persist the LLM logging toggle to settings.json."""
+    cfg = read_app_config()
+    cfg["llm_logging_enabled"] = enabled
+    write_app_config(cfg)
 
 
 def write_model_assignments(assignments: dict) -> None:

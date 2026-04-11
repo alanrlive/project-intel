@@ -308,6 +308,8 @@ function LlmConfigPanel() {
   const [rebuildingIndex, setRebuildingIndex] = useState(false);
   const [rebuildResult, setRebuildResult]   = useState<{ embedded: number; total: number } | null>(null);
 
+  const [llmLogging, setLlmLogging] = useState(false);
+
   useEffect(() => {
     testConnection();
     loadAssignments();
@@ -317,7 +319,19 @@ function LlmConfigPanel() {
         setVectorDocCount(s.total_docs);
       })
       .catch(() => setVectorStatus("disconnected"));
+    api.getLlmLogging()
+      .then((r) => setLlmLogging(r.enabled))
+      .catch(() => {});
   }, []);
+
+  const handleToggleLlmLogging = async (enabled: boolean) => {
+    try {
+      await api.setLlmLogging(enabled);
+      setLlmLogging(enabled);
+    } catch {
+      toast("Failed to update logging setting", "error");
+    }
+  };
 
   const testConnection = async () => {
     setTesting(true);
@@ -660,6 +674,37 @@ function LlmConfigPanel() {
               </p>
             )}
           </div>
+        </CardContent>
+      </Card>
+
+      {/* ── LLM response logging ── */}
+      <Card>
+        <CardHeader>
+          <CardTitle>LLM Response Logging</CardTitle>
+          <CardDescription>
+            Saves prompt and response JSON for each upload to{" "}
+            <code className="text-xs bg-zinc-700 px-1 rounded">backend/logs/llm/YYYY-MM-DD/</code>
+            {" "}— useful for debugging extraction
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <label className="flex items-center gap-3 cursor-pointer select-none">
+            <button
+              role="switch"
+              aria-checked={llmLogging}
+              onClick={() => handleToggleLlmLogging(!llmLogging)}
+              className={cn(
+                "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus:outline-none",
+                llmLogging ? "bg-blue-600" : "bg-zinc-600"
+              )}
+            >
+              <span className={cn(
+                "inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform",
+                llmLogging ? "translate-x-4" : "translate-x-1"
+              )} />
+            </button>
+            <span className="text-sm text-zinc-300">Log LLM responses to disk</span>
+          </label>
         </CardContent>
       </Card>
 

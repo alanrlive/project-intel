@@ -1,6 +1,8 @@
 import email
+import json
 import logging
-from datetime import date
+import re
+from datetime import date, datetime
 from pathlib import Path
 
 import pdfplumber
@@ -11,8 +13,39 @@ from sqlalchemy.orm import Session
 from app.llm_service import OllamaService
 from app.models import Action, Deadline, Dependency, Document, DocumentType, RaidItemHistory, Risk, ScopeItem
 from app.vector_service import VectorService
+from app.config import get_llm_logging, get_model_assignments, LOGS_DIR
 
 logger = logging.getLogger(__name__)
+
+
+def _log_llm_response(
+    file_path: Path,
+    doc_type_name: str,
+    prompt: str,
+    raw_response: dict,
+    parsed_ok: bool,
+) -> None:
+    """Write a JSON log file for the LLM extraction call. Never raises."""
+    try:
+        if not get_llm_logging():
+            return
+        now = datetime.now()
+        log_dir = LOGS_DIR / "llm" / now.strftime("%Y-%m-%d")
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / f"{file_path.stem}_{now.strftime('%H%M%S')}.json"
+        model = get_model_assignments().get("extraction", {}).get("model", "unknown")
+        payload = {
+            "document":      file_path.name,
+            "document_type": doc_type_name,
+            "model":         model,
+            "timestamp":     now.isoformat(),
+            "prompt_sent":   prompt,
+            "raw_response":  json.dumps(raw_response),
+            "parsed_ok":     parsed_ok,
+        }
+        log_file.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        logger.warning("Failed to write LLM response log")
 
 # ── Legacy extraction prompt (fallback only) ──────────────────────────────────
 # Used by: run_llm_extraction() → process_document() → POST /documents/upload
@@ -252,7 +285,7 @@ def _build_existing_items_context(db: Session) -> str:
         for row in rows:
             if len(lines) >= _OPEN_ITEM_CAP:
                 break
-            desc = row.description[:80].replace("\n", " ") if row.description else ""
+            desc = row.description.replace("\n", " ") if row.description else ""
             status = getattr(row, "status", "open") or "open"
             lines.append(f"{row.reference_id} | {desc} | {status}")
 
@@ -268,6 +301,42 @@ def _build_existing_items_context(db: Session) -> str:
     )
 
 
+# ── Universal extraction prompt ───────────────────────────────────────────────
+# Runs for every upload regardless of document type.
+# Document type is injected as a hint to bias focus, not to restrict scope.
+
+UNIVERSAL_BASE_PROMPT = (
+    'Extract all RAID items from this document. Return JSON (omit empty arrays):\n'
+    '\n'
+    '- "risks": [{"id": str|null, "description": str, "impact": "high"|"medium"|"low", "likelihood": "high"|"medium"|"low", "mitigation": str|null, "status": "open"|"closed"}]\n'
+    '- "actions": [{"id": str|null, "description": str, "owner": str|null, "due_date": "YYYY-MM-DD"|null, "priority": "high"|"medium"|"low", "status": "open"|"done"|"cancelled"}]\n'
+    '- "dependencies": [{"id": str|null, "task_a": str, "dependency_type": "blocks"|"enables"|"relates_to", "task_b": str, "notes": str|null}]\n'
+    '- "deadlines": [{"id": str|null, "description": str, "deadline_date": "YYYY-MM-DD"|null, "met": bool}]\n'
+    '- "scope_items": [{"id": str|null, "description": str, "source": str|null, "approved": bool, "impact_assessment": str|null}]\n'
+    '\n'
+    'STATUS: Actions COMPLETED/DONE/FINISHED/CLOSED="done". CANCELLED/DEFERRED="cancelled". Otherwise="open". '
+    'Risks RESOLVED/CLOSED/MITIGATED="closed".\n'
+    '\n'
+    'CRITICAL: Return ALL items regardless of status. Do NOT omit completed or closed items. Return them with their correct status.\n'
+    '\n'
+    'FIELDS: Always return all fields for every item. Never truncate descriptions. '
+    'For completed items carry forward original dates and priorities if present in the document.\n'
+    '\n'
+    'DESCRIPTION: Set description to the text as it appears in THIS document. '
+    'For updates use the latest text not the original wording.\n'
+    '\n'
+    'IDs: Extract reference IDs exactly as they appear (e.g. ACT-001, RSK-003). Return null if no ID present.\n'
+    '\n'
+    'DATES: Use task dates not file metadata dates. Do NOT create deadline entries for action due dates — '
+    'deadlines are distinct project milestones, not action completion dates.\n'
+    '\n'
+    'DEPENDENCIES: "A blocks B" means A must finish before B starts. '
+    'Only extract explicit dependency relationships, not implied ones.\n'
+    '\n'
+    'JSON only, no markdown.'
+)
+
+
 # ── Type-aware extraction ─────────────────────────────────────────────────────
 
 async def extract_with_type(
@@ -277,18 +346,15 @@ async def extract_with_type(
     llm: OllamaService,
 ) -> dict:
     """
-    Extract content using the prompt + model from a DocumentType record.
-    Returns the parsed extraction dict (same shape as run_llm_extraction).
+    Extract all RAID items using the universal base prompt.
+    Document type is injected as a hint to bias extraction focus.
+    Custom document types may append an additional hint if extraction_prompt is set.
     """
     doc_type: DocumentType | None = db.query(DocumentType).filter(
         DocumentType.id == document_type_id
     ).first()
 
-    if doc_type is None:
-        # Fall back to the built-in General prompt
-        logger.warning("DocumentType id=%d not found — using built-in extraction", document_type_id)
-        content = extract_text(file_path)
-        return await run_llm_extraction(content, "General", llm)
+    type_name = doc_type.name if doc_type else "General"
 
     content = extract_text(file_path)
     if not content.strip():
@@ -305,20 +371,32 @@ async def extract_with_type(
     if len(content) > max_chars:
         logger.warning(
             "Document truncated from %d to %d chars for type '%s'",
-            len(content), max_chars, doc_type.name,
+            len(content), max_chars, type_name,
         )
         content = content[:max_chars] + "\n\n[... document truncated ...]"
 
+    # Document type hint — biases focus without restricting scope
+    type_hint = (
+        f"Document type: {type_name}. Use this as context to guide extraction focus "
+        f"but extract ALL relevant RAID items found regardless of type.\n\n"
+    )
+
+    # Custom types may carry an additional prompt hint (system types have none)
+    custom_hint = ""
+    if doc_type and doc_type.extraction_prompt:
+        custom_hint = f"\nAdditional context for this document type: {doc_type.extraction_prompt}\n"
+
     existing_context = _build_existing_items_context(db)
     prompt = (
-        f"{doc_type.extraction_prompt}"
+        f"{type_hint}"
+        f"{UNIVERSAL_BASE_PROMPT}"
+        f"{custom_hint}"
         f"{existing_context}"
         f"\n\nDocument content:\n{content}"
     )
 
-    # Model, context, and system_prompt come from the extraction role assignment
     raw_response = await llm.extract(prompt)
-    logger.debug(f"LLM raw response: {raw_response}")
+    _log_llm_response(file_path, type_name, prompt, raw_response, bool(raw_response))
     return raw_response
 
 
@@ -354,6 +432,42 @@ def _write_history(
     ))
 
 
+# Matches any reference-id token at a word boundary (e.g. ACT-001, RSK-12, DL-003)
+_REF_ID_RE = re.compile(r'\b[A-Z]{2,6}-\d+\b')
+
+
+def _extract_source_text(content_text: str, reference_id: str) -> str | None:
+    """
+    Return the line(s) from content_text that mention reference_id.
+
+    Algorithm:
+    - Split on newlines; find the first line containing reference_id
+      (case-insensitive).
+    - If the next line exists and does NOT begin a new reference-id entry,
+      append it (captures multi-line descriptions).
+    - Strip whitespace; cap at 500 characters.
+    - Returns None if reference_id is not found.
+    """
+    if not content_text or not reference_id:
+        return None
+
+    needle = reference_id.upper()
+    lines  = content_text.splitlines()
+
+    for i, line in enumerate(lines):
+        if needle not in line.upper():
+            continue
+        text = line.strip()
+        if i + 1 < len(lines):
+            next_line = lines[i + 1].strip()
+            # Only merge if the next line doesn't start its own ref-id entry
+            if next_line and not _REF_ID_RE.search(next_line):
+                text = text + " " + next_line
+        return text[:500] or None
+
+    return None
+
+
 def store_extracted_data(extracted: dict, doc_id: int, db: Session) -> dict:
     """
     Persist extracted actions/deadlines/risks/dependencies/scope_items.
@@ -373,6 +487,10 @@ def store_extracted_data(extracted: dict, doc_id: int, db: Session) -> dict:
         "dependencies": 0,
         "scope_items": 0,
     }
+
+    # Fetch document content once — used to extract source text for history rows
+    _doc = db.query(Document).filter(Document.id == doc_id).first()
+    content_text: str = (_doc.content_text or "") if _doc else ""
 
     _valid_action_status = {"open", "done", "cancelled"}
     _valid_risk_status   = {"open", "closed"}
@@ -398,7 +516,8 @@ def store_extracted_data(extracted: dict, doc_id: int, db: Session) -> dict:
             existing.owner    = item.get("owner") or existing.owner
             existing.due_date = _parse_date(item.get("due_date")) or existing.due_date
             existing.priority = item.get("priority") or existing.priority
-            row_id = existing.id
+            row_id    = existing.id
+            hist_desc = (_extract_source_text(content_text, ref_id) if ref_id else None) or item["description"]
         else:
             row = Action(
                 description=item["description"],
@@ -411,9 +530,10 @@ def store_extracted_data(extracted: dict, doc_id: int, db: Session) -> dict:
             )
             db.add(row)
             db.flush()  # populate row.id
-            row_id = row.id
+            row_id    = row.id
+            hist_desc = item["description"]
 
-        _write_history(db, "action", row_id, ref_id, item["description"], status, doc_id)
+        _write_history(db, "action", row_id, ref_id, hist_desc, status, doc_id)
         counts["actions"] += 1
 
     # ── Deadlines ─────────────────────────────────────────────────────────────
@@ -435,7 +555,8 @@ def store_extracted_data(extracted: dict, doc_id: int, db: Session) -> dict:
                 existing.description = incoming_desc
             existing.deadline_date = dl
             existing.met           = met
-            row_id = existing.id
+            row_id    = existing.id
+            hist_desc = (_extract_source_text(content_text, ref_id) if ref_id else None) or item["description"]
         else:
             row = Deadline(
                 description=item["description"],
@@ -446,9 +567,10 @@ def store_extracted_data(extracted: dict, doc_id: int, db: Session) -> dict:
             )
             db.add(row)
             db.flush()
-            row_id = row.id
+            row_id    = row.id
+            hist_desc = item["description"]
 
-        _write_history(db, "deadline", row_id, ref_id, item["description"], "met" if met else "open", doc_id)
+        _write_history(db, "deadline", row_id, ref_id, hist_desc, "met" if met else "open", doc_id)
         counts["deadlines"] += 1
 
     # ── Risks ─────────────────────────────────────────────────────────────────
@@ -472,7 +594,8 @@ def store_extracted_data(extracted: dict, doc_id: int, db: Session) -> dict:
             existing.impact     = item.get("impact") or existing.impact
             existing.likelihood = item.get("likelihood") or existing.likelihood
             existing.mitigation = item.get("mitigation") or existing.mitigation
-            row_id = existing.id
+            row_id    = existing.id
+            hist_desc = (_extract_source_text(content_text, ref_id) if ref_id else None) or item["description"]
         else:
             row = Risk(
                 description=item["description"],
@@ -484,41 +607,56 @@ def store_extracted_data(extracted: dict, doc_id: int, db: Session) -> dict:
             )
             db.add(row)
             db.flush()
-            row_id = row.id
+            row_id    = row.id
+            hist_desc = item["description"]
 
-        _write_history(db, "risk", row_id, ref_id, item["description"], status, doc_id)
+        _write_history(db, "risk", row_id, ref_id, hist_desc, status, doc_id)
         counts["risks"] += 1
 
     # ── Dependencies ──────────────────────────────────────────────────────────
     for item in extracted.get("dependencies", []):
         if not item.get("task_a") or not item.get("task_b"):
             continue
-        ref_id = item.get("id") or None
+        ref_id   = item.get("id") or None
         dep_type = item.get("dependency_type", "relates_to")
+        notes    = item.get("notes") or None
 
-        existing: Dependency | None = (
-            db.query(Dependency).filter(Dependency.reference_id == ref_id).first()
-            if ref_id else None
-        )
+        existing: Dependency | None = None
+        if ref_id:
+            existing = db.query(Dependency).filter(Dependency.reference_id == ref_id).first()
+        else:
+            # No reference_id — deduplicate by (task_a, dependency_type, task_b)
+            existing = (
+                db.query(Dependency)
+                .filter(
+                    Dependency.task_a == item["task_a"],
+                    Dependency.dependency_type == dep_type,
+                    Dependency.task_b == item["task_b"],
+                )
+                .first()
+            )
 
         if existing:
             existing.task_a          = item["task_a"]
             existing.task_b          = item["task_b"]
             existing.dependency_type = dep_type
-            row_id = existing.id
+            existing.notes           = notes or existing.notes
+            row_id    = existing.id
+            hist_desc = (_extract_source_text(content_text, ref_id) if ref_id else None) or f"{item['task_a']} {dep_type} {item['task_b']}"
         else:
             row = Dependency(
                 task_a=item["task_a"],
                 task_b=item["task_b"],
                 dependency_type=dep_type,
+                notes=notes,
                 reference_id=ref_id,
             )
             db.add(row)
             db.flush()
-            row_id = row.id
+            row_id    = row.id
+            hist_desc = f"{item['task_a']} {dep_type} {item['task_b']}"
 
-        description = f"{item['task_a']} {dep_type} {item['task_b']}"
-        _write_history(db, "dependency", row_id, ref_id, description, None, doc_id)
+        _write_history(db, "dependency", row_id, ref_id, hist_desc, None, doc_id)
         counts["dependencies"] += 1
 
     # ── Scope items ───────────────────────────────────────────────────────────
@@ -537,7 +675,8 @@ def store_extracted_data(extracted: dict, doc_id: int, db: Session) -> dict:
             if len(incoming_desc) >= len(existing.description):
                 existing.description = incoming_desc
             existing.source = item.get("source") or existing.source
-            row_id = existing.id
+            row_id    = existing.id
+            hist_desc = (_extract_source_text(content_text, ref_id) if ref_id else None) or item["description"]
         else:
             row = ScopeItem(
                 description=item["description"],
@@ -547,9 +686,10 @@ def store_extracted_data(extracted: dict, doc_id: int, db: Session) -> dict:
             )
             db.add(row)
             db.flush()
-            row_id = row.id
+            row_id    = row.id
+            hist_desc = item["description"]
 
-        _write_history(db, "scope_item", row_id, ref_id, item["description"], None, doc_id)
+        _write_history(db, "scope_item", row_id, ref_id, hist_desc, None, doc_id)
         counts["scope_items"] += 1
 
     db.commit()

@@ -39,4 +39,8 @@ Write-Host "   Backend will run on: http://localhost:8000" -ForegroundColor Cyan
 Write-Host "   API docs available at: http://localhost:8000/docs" -ForegroundColor Cyan
 Write-Host "`n   Press Ctrl+C to stop the server`n" -ForegroundColor Gray
 
+# To enable debug logging at startup:
+# $env:DEBUG_LOGGING = "1"
+# uvicorn app.main:app --reload
+
 uvicorn app.main:app --reload

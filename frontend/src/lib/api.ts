@@ -275,4 +275,15 @@ export const api = {
 
   rebuildVectorIndex: () =>
     request<RebuildResult>("/settings/rebuild-vector-index", { method: "POST" }),
+
+  // ── Settings — LLM logging ────────────────────────────────────────────────
+  getLlmLogging: () =>
+    request<{ enabled: boolean }>("/settings/llm-logging"),
+
+  setLlmLogging: (enabled: boolean) =>
+    request<{ enabled: boolean }>("/settings/llm-logging", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    }),
 };

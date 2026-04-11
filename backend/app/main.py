@@ -1,11 +1,12 @@
 import logging
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime
 
 from fastapi import FastAPI
-
-logging.basicConfig(level=logging.DEBUG)
 from fastapi.middleware.cors import CORSMiddleware
+
+logging.basicConfig(level=logging.DEBUG if os.environ.get("DEBUG_LOGGING") == "1" else logging.INFO)
 
 from app.config import get_settings
 from app.database import init_db

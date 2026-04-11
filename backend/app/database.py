@@ -42,102 +42,16 @@ def get_db():
 
 
 _SYSTEM_TYPES = [
-    {
-        "name": "General",
-        "target_model": "mistral-nemo",
-        "extraction_prompt": (
-            'Extract project management data as JSON (omit empty arrays):\n'
-            '- "actions": [{"id": str|null, "description": str, "owner": str|null, "due_date": "YYYY-MM-DD"|null, "priority": "high"|"medium"|"low", "status": "open"|"done"|"cancelled"}]\n'
-            'CRITICAL: Return ALL actions mentioned in this document regardless of status. Do NOT omit actions that are completed, done, finished, or closed. Completed actions must be returned with status: done. Cancelled or deferred actions must be returned with status: cancelled. Omitting completed actions prevents the system from closing them off in the tracker.\n'
-            'FIELDS: Always return all fields for every action regardless of status. Never truncate descriptions — return the full description text exactly as it appears in the document. For completed actions, carry forward the original due_date and priority from the document if present. Only return null for fields that are genuinely absent from the document.\n'
-            'DESCRIPTION: For each item, set the description field to the text as it appears in THIS document. Do not repeat the original action description if this document contains updated or completion text about that item. For example, if a document says "ACTION-001: Dev environment setup complete, all team members confirmed", return that text as the description, not the original "set up dev environment" wording.\n'
-            '- "risks": [{"id": str|null, "description": str, "impact": "high"|"medium"|"low", "likelihood": "high"|"medium"|"low", "mitigation": str|null, "status": "open"|"closed"}]\n'
-            '- "deadlines": [{"id": str|null, "description": str, "deadline_date": "YYYY-MM-DD", "met": true|false}]\n'
-            '- "dependencies": [{"id": str|null, "task_a": str, "dependency_type": "blocks"|"enables"|"relates_to", "task_b": str}]\n'
-            '- "scope_items": [{"id": str|null, "description": str, "source": "deferred"|"change_request"|"original"|"meeting"}]\n'
-            "\n"
-            'ID: Extract the reference ID exactly as it appears in the document (e.g. "ACT-001", "RSK-003", "DL-02"). If no ID is present, return null.\n'
-            'STATUS: Actions COMPLETED/DONE/FINISHED/CLOSED="done". CANCELLED/DEFERRED/OUT OF SCOPE="cancelled". Otherwise="open". '
-            'Risks RESOLVED/CLOSED/MITIGATED="closed". Deadlines MET/ACHIEVED/DELIVERED=true. '
-            'Check narrative: "we finally finished X", "X is behind us", "X no longer a problem".\n'
-            'Scope items: future features, DEFERRED/V3/OUT OF SCOPE, "it would be cool if".\n'
-            'Dependencies: "A blocks B" = A must finish before B starts. A is prerequisite.\n'
-            "Dates: use task dates, not file metadata.\n"
-            "JSON only, no markdown."
-        ),
-    },
-    {
-        "name": "RAID Log",
-        "target_model": "mistral-nemo",
-        "extraction_prompt": (
-            "Extract all RAID items from ALL sheets/tabs. Return JSON (omit empty arrays):\n"
-            '- "risks": [{"id": str|null, "description": str, "impact": "high"|"medium"|"low", "likelihood": "high"|"medium"|"low", "mitigation": str|null, "status": "open"|"closed"}]\n'
-            '- "actions": [{"id": str|null, "description": str, "owner": str|null, "due_date": "YYYY-MM-DD"|null, "priority": "high"|"medium"|"low", "status": "open"|"done"|"cancelled"}]\n'
-            'CRITICAL: Return ALL actions mentioned in this document regardless of status. Do NOT omit actions that are completed, done, finished, or closed. Completed actions must be returned with status: done. Cancelled or deferred actions must be returned with status: cancelled. Omitting completed actions prevents the system from closing them off in the tracker.\n'
-            'FIELDS: Always return all fields for every action regardless of status. Never truncate descriptions — return the full description text exactly as it appears in the document. For completed actions, carry forward the original due_date and priority from the document if present. Only return null for fields that are genuinely absent from the document.\n'
-            'DESCRIPTION: For each item, set the description field to the text as it appears in THIS document. Do not repeat the original action description if this document contains updated or completion text about that item. For example, if a document says "ACTION-001: Dev environment setup complete, all team members confirmed", return that text as the description, not the original "set up dev environment" wording.\n'
-            '- "dependencies": [{"id": str|null, "task_a": str, "dependency_type": "blocks"|"enables"|"relates_to", "task_b": str}]\n'
-            "\n"
-            'ID: Extract the reference ID exactly as it appears in the document (e.g. "ACT-001", "RSK-003"). If no ID is present in the row/item, return null.\n'
-            'STATUS: Actions COMPLETED/DONE/FINISHED/CLOSED="done". CANCELLED/DEFERRED="cancelled". Otherwise="open". '
-            'Risks RESOLVED/CLOSED/MITIGATED="closed". Check status columns AND narrative text.\n'
-            'Dependencies: "A blocks B" = A must finish before B starts. Check all tabs.\n'
-            "Dates: use task dates, not file metadata.\n"
-            "Assumptions/issues → actions if owner/date present, else risks.\n"
-            "JSON only, no markdown."
-        ),
-    },
-    {
-        "name": "Task List",
-        "target_model": "mistral-nemo",
-        "extraction_prompt": (
-            "Extract all tasks, action items, and deadlines from this document. "
-            "Return a JSON object with:\n"
-            '- "actions": [{"id": str|null, "description": str, "owner": str|null, "due_date": "YYYY-MM-DD"|null, "priority": "high"|"medium"|"low", "status": "open"|"done"|"cancelled"}]\n'
-            'CRITICAL: Return ALL actions mentioned in this document regardless of status. Do NOT omit actions that are completed, done, finished, or closed. Completed actions must be returned with status: done. Cancelled or deferred actions must be returned with status: cancelled. Omitting completed actions prevents the system from closing them off in the tracker.\n'
-            'FIELDS: Always return all fields for every action regardless of status. Never truncate descriptions — return the full description text exactly as it appears in the document. For completed actions, carry forward the original due_date and priority from the document if present. Only return null for fields that are genuinely absent from the document.\n'
-            'DESCRIPTION: For each item, set the description field to the text as it appears in THIS document. Do not repeat the original action description if this document contains updated or completion text about that item. For example, if a document says "ACTION-001: Dev environment setup complete, all team members confirmed", return that text as the description, not the original "set up dev environment" wording.\n'
-            '- "deadlines": [{"id": str|null, "description": str, "deadline_date": "YYYY-MM-DD", "met": true|false}]\n'
-            'ID: Extract the reference ID exactly as it appears (e.g. "TSK-001"). Return null if none.\n'
-            "Infer priority from language (urgent/critical = high, soon/shortly = medium, eventually = low). "
-            "Return only valid JSON, no explanation or markdown."
-        ),
-    },
-    {
-        "name": "Project Plan",
-        "target_model": "llama3.1",
-        "extraction_prompt": (
-            "Extract all project planning information from this document. "
-            "Return a JSON object with:\n"
-            '- "actions": [{"id": str|null, "description": str, "owner": str|null, "due_date": "YYYY-MM-DD"|null, "priority": "high"|"medium"|"low", "status": "open"|"done"|"cancelled"}]\n'
-            'CRITICAL: Return ALL actions mentioned in this document regardless of status. Do NOT omit actions that are completed, done, finished, or closed. Completed actions must be returned with status: done. Cancelled or deferred actions must be returned with status: cancelled. Omitting completed actions prevents the system from closing them off in the tracker.\n'
-            'FIELDS: Always return all fields for every action regardless of status. Never truncate descriptions — return the full description text exactly as it appears in the document. For completed actions, carry forward the original due_date and priority from the document if present. Only return null for fields that are genuinely absent from the document.\n'
-            'DESCRIPTION: For each item, set the description field to the text as it appears in THIS document. Do not repeat the original action description if this document contains updated or completion text about that item. For example, if a document says "ACTION-001: Dev environment setup complete, all team members confirmed", return that text as the description, not the original "set up dev environment" wording.\n'
-            '- "deadlines": [{"id": str|null, "description": str, "deadline_date": "YYYY-MM-DD", "met": true|false}]\n'
-            '- "dependencies": [{"id": str|null, "task_a": str, "dependency_type": "blocks"|"enables"|"relates_to", "task_b": str, "notes": str|null}]\n'
-            '- "risks": [{"id": str|null, "description": str, "impact": "high"|"medium"|"low", "likelihood": "high"|"medium"|"low", "mitigation": str|null, "status": "open"|"closed"}]\n'
-            '- "scope_items": [{"id": str|null, "description": str, "source": "original_plan"|"change_request"|"meeting", "impact_assessment": str|null}]\n'
-            'ID: Extract the reference ID exactly as it appears in the document. Return null if none.\n'
-            "Return only valid JSON, no explanation or markdown."
-        ),
-    },
-    {
-        "name": "Financial Data",
-        "target_model": "deepseek-r1",
-        "extraction_prompt": (
-            "Extract all financially relevant project management information from this document. "
-            "Return a JSON object with:\n"
-            '- "risks": [{"id": str|null, "description": str, "impact": "high"|"medium"|"low", "likelihood": "high"|"medium"|"low", "mitigation": str|null, "status": "open"|"closed"}]\n'
-            '- "actions": [{"id": str|null, "description": str, "owner": str|null, "due_date": "YYYY-MM-DD"|null, "priority": "high"|"medium"|"low", "status": "open"|"done"|"cancelled"}]\n'
-            'CRITICAL: Return ALL actions mentioned in this document regardless of status. Do NOT omit actions that are completed, done, finished, or closed. Completed actions must be returned with status: done. Cancelled or deferred actions must be returned with status: cancelled. Omitting completed actions prevents the system from closing them off in the tracker.\n'
-            'FIELDS: Always return all fields for every action regardless of status. Never truncate descriptions — return the full description text exactly as it appears in the document. For completed actions, carry forward the original due_date and priority from the document if present. Only return null for fields that are genuinely absent from the document.\n'
-            'DESCRIPTION: For each item, set the description field to the text as it appears in THIS document. Do not repeat the original action description if this document contains updated or completion text about that item. For example, if a document says "ACTION-001: Dev environment setup complete, all team members confirmed", return that text as the description, not the original "set up dev environment" wording.\n'
-            '- "scope_items": [{"id": str|null, "description": str, "source": "change_request"|"original_plan"|"meeting", "impact_assessment": str|null}]\n'
-            'ID: Extract the reference ID exactly as it appears in the document. Return null if none.\n'
-            "Focus on budget overruns, cost risks, approval actions, and scope changes with financial impact. "
-            "Return only valid JSON, no explanation or markdown."
-        ),
-    },
+    # System types no longer drive extraction — the universal base prompt in
+    # document_processor.py handles all RAID extraction for every upload.
+    # extraction_prompt is intentionally empty here; document type is injected
+    # as a hint only. Custom user types may set extraction_prompt as an
+    # additional hint appended to the base prompt.
+    {"name": "General",        "target_model": "mistral-nemo",  "extraction_prompt": ""},
+    {"name": "RAID Log",       "target_model": "mistral-nemo",  "extraction_prompt": ""},
+    {"name": "Task List",      "target_model": "mistral-nemo",  "extraction_prompt": ""},
+    {"name": "Project Plan",   "target_model": "llama3.1",      "extraction_prompt": ""},
+    {"name": "Financial Data", "target_model": "deepseek-r1",   "extraction_prompt": ""},
 ]
 
 
