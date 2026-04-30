@@ -1,5 +1,9 @@
 import type {
   Action,
+  BackupConfig,
+  BackupCreateResult,
+  BackupEntry,
+  BackupRestoreResult,
   BatchUploadResult,
   Deadline,
   Dependency,
@@ -285,5 +289,36 @@ export const api = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ enabled }),
+    }),
+
+  // ── Backup ────────────────────────────────────────────────────────────────
+  getBackupConfig: () =>
+    request<BackupConfig>("/backup/config"),
+
+  saveBackupConfig: (config: BackupConfig) =>
+    request<BackupConfig>("/backup/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(config),
+    }),
+
+  createBackup: () =>
+    request<BackupCreateResult>("/backup/create", { method: "POST" }),
+
+  listBackups: () =>
+    request<BackupEntry[]>("/backup/list"),
+
+  deleteBackup: (filepath: string) =>
+    request<{ deleted: boolean; filename: string }>("/backup/delete", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filepath }),
+    }),
+
+  restoreBackup: (filepath: string) =>
+    request<BackupRestoreResult>("/backup/restore", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filepath }),
     }),
 };

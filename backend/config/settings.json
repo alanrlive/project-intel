@@ -17,5 +17,23 @@
       "system_prompt": "You are a strategic project analyst. Provide deep analysis of scope, risks, dependencies, and project health. Show your reasoning process and highlight patterns or concerns the team should be aware of."
     }
   },
-  "llm_logging_enabled": true
+  "llm_logging_enabled": true,
+  "backup": {
+    "enabled": true,
+    "destinations": [
+      {
+        "label": "Test Dest",
+        "path": "C:\\Users\\alanr\\OneDrive\\Dokumenty\\PM_Tool_Backup"
+      },
+      {
+        "label": "Destination 2",
+        "path": "C:\\Users\\alanr\\OneDrive\\Dokumenty\\PM_Tool_Backup"
+      }
+    ],
+    "schedule": {
+      "enabled": false,
+      "hour": 2,
+      "minute": 0
+    }
+  }
 }

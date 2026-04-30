@@ -1,14 +1,21 @@
 import { useEffect, useState } from "react";
 import { ChevronDown, ChevronRight, Pencil, Trash2, Plus, Wifi, WifiOff, RefreshCw, Folder, X, Check, Download, AlertTriangle, Save } from "lucide-react";
 import { api } from "@/lib/api";
-import type { DocumentType, ModelAssignments } from "@/types";
+import type {
+  BackupConfig,
+  BackupDestination,
+  BackupEntry,
+  BackupScheduleConfig,
+  DocumentType,
+  ModelAssignments,
+} from "@/types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 
-type SettingsTab = "document-types" | "folders" | "llm" | "about";
+type SettingsTab = "document-types" | "folders" | "backup" | "llm" | "about";
 
 // ── Modal state ───────────────────────────────────────────────────────────────
 
@@ -252,6 +259,393 @@ function DocumentTypesPanel() {
               <Button variant="ghost" onClick={closeModal} disabled={saving}>Cancel</Button>
               <Button onClick={handleSave} disabled={saving || formPrompt.length > PROMPT_MAX}>
                 {saving ? "Saving…" : "Save"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Backup panel
+// ══════════════════════════════════════════════════════════════════════════════
+
+function BackupPanel() {
+  const [config, setConfig]                 = useState<BackupConfig | null>(null);
+  const [loading, setLoading]               = useState(true);
+  const [saving, setSaving]                 = useState(false);
+  const [creating, setCreating]             = useState(false);
+  const [backups, setBackups]               = useState<BackupEntry[]>([]);
+  const [backupsLoading, setBackupsLoading] = useState(true);
+  const [restoreInfo, setRestoreInfo]       = useState<string | null>(null);
+  const [confirmEntry, setConfirmEntry]     = useState<BackupEntry | null>(null);
+
+  useEffect(() => {
+    api.getBackupConfig()
+      .then(setConfig)
+      .catch(() => toast("Failed to load backup config", "error"))
+      .finally(() => setLoading(false));
+    api.listBackups()
+      .then(setBackups)
+      .catch(() => {})
+      .finally(() => setBackupsLoading(false));
+  }, []);
+
+  const patchConfig = (patch: Partial<BackupConfig>) =>
+    setConfig((prev) => prev ? { ...prev, ...patch } : null);
+
+  const patchDest = (i: number, field: keyof BackupDestination, value: string) =>
+    setConfig((prev) => {
+      if (!prev) return null;
+      const destinations = prev.destinations.map((d, idx) =>
+        idx === i ? { ...d, [field]: value } : d
+      );
+      return { ...prev, destinations };
+    });
+
+  const patchSchedule = (patch: Partial<BackupScheduleConfig>) =>
+    setConfig((prev) =>
+      prev ? { ...prev, schedule: { ...prev.schedule, ...patch } } : null
+    );
+
+  const save = async () => {
+    if (!config) return;
+    setSaving(true);
+    try {
+      const saved = await api.saveBackupConfig(config);
+      setConfig(saved);
+      toast("Backup settings saved", "success");
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Save failed", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCreateBackup = async () => {
+    setCreating(true);
+    try {
+      const r = await api.createBackup();
+      toast(`Backup created: ${r.filename} (${r.size_mb} MB)`, "success");
+      setBackups(await api.listBackups());
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Backup failed", "error");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleDelete = async (entry: BackupEntry) => {
+    try {
+      await api.deleteBackup(entry.path);
+      toast(`Deleted ${entry.filename}`, "info");
+      setBackups((prev) => prev.filter((b) => b.path !== entry.path));
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Delete failed", "error");
+    }
+  };
+
+  const handleRestoreConfirmed = async () => {
+    if (!confirmEntry) return;
+    const entry = confirmEntry;
+    setConfirmEntry(null);
+    setRestoreInfo(null);
+    try {
+      const result = await api.restoreBackup(entry.path);
+      toast(result.message, "success");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Restore failed";
+      if (msg.startsWith("Stop the backend")) {
+        setRestoreInfo(msg);
+      } else {
+        toast(msg, "error");
+      }
+    }
+  };
+
+  if (loading) return <p className="text-sm text-zinc-500">Loading…</p>;
+  if (!config)  return <p className="text-sm text-zinc-500">Could not load backup settings.</p>;
+
+  const off       = !config.enabled;
+  const hasPath   = config.destinations.some((d) => d.path.trim());
+  const canBackup = config.enabled && hasPath;
+  const schedHour = String(config.schedule.hour).padStart(2, "0");
+  const schedMin  = String(config.schedule.minute).padStart(2, "0");
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-zinc-100">Backup</h2>
+          <p className="text-xs text-zinc-500 mt-0.5">
+            Create zip backups of your database, uploads, and configuration.
+          </p>
+        </div>
+        <Button size="sm" onClick={save} disabled={saving}>
+          <Save size={13} />
+          {saving ? "Saving…" : "Save Settings"}
+        </Button>
+      </div>
+
+      {/* Section 1 — Status */}
+      <Card>
+        <CardHeader><CardTitle>Backup Status</CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          <label className="flex items-center gap-3 cursor-pointer select-none">
+            <button
+              role="switch"
+              aria-checked={config.enabled}
+              onClick={() => patchConfig({ enabled: !config.enabled })}
+              className={cn(
+                "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus:outline-none",
+                config.enabled ? "bg-blue-600" : "bg-zinc-600"
+              )}
+            >
+              <span className={cn(
+                "inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform",
+                config.enabled ? "translate-x-4" : "translate-x-1"
+              )} />
+            </button>
+            <span className="text-sm text-zinc-300">Enable Backups</span>
+          </label>
+          <p className={cn("text-xs", config.enabled ? "text-emerald-400" : "text-zinc-500")}>
+            {config.enabled ? "Backups enabled" : "Backups disabled"}
+          </p>
+        </CardContent>
+      </Card>
+
+      {/* Section 2 — Destinations */}
+      <Card>
+        <CardHeader><CardTitle>Backup Destinations</CardTitle></CardHeader>
+        <CardContent className="space-y-4">
+          {config.destinations.map((dest, i) => (
+            <div key={i} className="space-y-1.5">
+              <div className="flex gap-2">
+                <input
+                  value={dest.label}
+                  onChange={(e) => patchDest(i, "label", e.target.value)}
+                  disabled={off}
+                  placeholder={`Destination ${i + 1}`}
+                  className={cn(INPUT, "w-32 shrink-0", off && "opacity-40 cursor-not-allowed")}
+                />
+                <input
+                  value={dest.path}
+                  onChange={(e) => patchDest(i, "path", e.target.value)}
+                  disabled={off}
+                  placeholder="e.g. C:\Backups"
+                  className={cn(INPUT, "flex-1 font-mono text-xs", off && "opacity-40 cursor-not-allowed")}
+                />
+              </div>
+              <p className="text-xs text-zinc-600 pl-1">Leave path empty to skip this destination</p>
+            </div>
+          ))}
+
+          {/* Phase 2 — GCP (static, greyed out) */}
+          <div className="space-y-1.5 opacity-40">
+            <div className="flex gap-2 items-center">
+              <input
+                value="Google Cloud Storage"
+                disabled
+                className={cn(INPUT, "w-32 shrink-0 cursor-not-allowed")}
+              />
+              <input
+                disabled
+                placeholder="Coming soon"
+                className={cn(INPUT, "flex-1 font-mono text-xs cursor-not-allowed")}
+              />
+              <Badge variant="outline">Phase 2</Badge>
+            </div>
+            <p className="text-xs text-zinc-600 pl-1">Leave path empty to skip this destination</p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Section 3 — Schedule */}
+      <Card>
+        <CardHeader><CardTitle>Scheduled Backups</CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          <label className="flex items-center gap-3 cursor-pointer select-none">
+            <button
+              role="switch"
+              aria-checked={config.schedule.enabled}
+              disabled={off}
+              onClick={() => !off && patchSchedule({ enabled: !config.schedule.enabled })}
+              className={cn(
+                "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus:outline-none",
+                config.schedule.enabled && !off ? "bg-blue-600" : "bg-zinc-600",
+                off && "cursor-not-allowed opacity-40"
+              )}
+            >
+              <span className={cn(
+                "inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform",
+                config.schedule.enabled && !off ? "translate-x-4" : "translate-x-1"
+              )} />
+            </button>
+            <span className={cn("text-sm", off ? "text-zinc-600" : "text-zinc-300")}>
+              Scheduled Backups
+            </span>
+          </label>
+
+          {config.schedule.enabled && !off && (
+            <div className="space-y-2 pl-1">
+              <div className="flex items-end gap-4">
+                <div className="space-y-1">
+                  <label className="text-xs text-zinc-500 block">Hour (0-23)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={23}
+                    value={config.schedule.hour}
+                    onChange={(e) =>
+                      patchSchedule({ hour: Math.min(23, Math.max(0, Number(e.target.value))) })
+                    }
+                    className={cn(INPUT, "w-20 text-center")}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-zinc-500 block">Minute (0-59)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={59}
+                    value={config.schedule.minute}
+                    onChange={(e) =>
+                      patchSchedule({ minute: Math.min(59, Math.max(0, Number(e.target.value))) })
+                    }
+                    className={cn(INPUT, "w-20 text-center")}
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-zinc-400">Daily at {schedHour}:{schedMin}</p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Section 4 — Create Backup */}
+      <Card>
+        <CardHeader><CardTitle>Create Backup</CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-xs text-zinc-500">
+            Creates a zip of your database, vector index, uploads, and configuration.
+          </p>
+          <Button onClick={handleCreateBackup} disabled={!canBackup || creating}>
+            {creating
+              ? <RefreshCw size={13} className="animate-spin" />
+              : <Download size={13} />}
+            {creating ? "Creating…" : "Create Backup"}
+          </Button>
+          {!config.enabled && (
+            <p className="text-xs text-zinc-600">Enable backups above to create a backup.</p>
+          )}
+          {config.enabled && !hasPath && (
+            <p className="text-xs text-zinc-600">Set at least one destination path above.</p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Restore info banner — shown when backend is running during restore */}
+      {restoreInfo && (
+        <div className="rounded border border-blue-700 bg-blue-950/40 px-4 py-3 text-sm text-blue-300 space-y-1">
+          <p className="font-medium text-blue-200">Backend is running</p>
+          <p className="text-xs">{restoreInfo}</p>
+          <button
+            onClick={() => setRestoreInfo(null)}
+            className="text-xs text-blue-400 hover:text-blue-200 underline"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {/* Section 5 — Backup History */}
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            Backup History
+            {backups.length > 0 && (
+              <span className="text-zinc-500 text-sm font-normal ml-1">({backups.length})</span>
+            )}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {backupsLoading ? (
+            <p className="text-sm text-zinc-500">Loading…</p>
+          ) : backups.length === 0 ? (
+            <p className="text-sm text-zinc-500">No backups found in configured destinations.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-zinc-700 text-left text-xs text-zinc-500 uppercase tracking-wider">
+                    <th className="pb-2 pr-4 font-medium">Filename</th>
+                    <th className="pb-2 pr-4 font-medium">Size</th>
+                    <th className="pb-2 pr-4 font-medium">Destination</th>
+                    <th className="pb-2 pr-4 font-medium">Timestamp</th>
+                    <th className="pb-2 font-medium"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {backups.map((b) => (
+                    <tr key={b.path} className="border-b border-zinc-800 hover:bg-zinc-800/40">
+                      <td className="py-2.5 pr-4 font-mono text-xs text-zinc-300">{b.filename}</td>
+                      <td className="py-2.5 pr-4 text-zinc-400 whitespace-nowrap">{b.size_mb} MB</td>
+                      <td className="py-2.5 pr-4 text-zinc-500 text-xs truncate max-w-[160px]">{b.destination}</td>
+                      <td className="py-2.5 pr-4 text-zinc-400 whitespace-nowrap text-xs">
+                        {b.timestamp ? new Date(b.timestamp).toLocaleString() : "—"}
+                      </td>
+                      <td className="py-2.5">
+                        <div className="flex items-center gap-1">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setConfirmEntry(b)}
+                            className="text-red-400 hover:text-red-300 text-xs px-2 h-auto py-1"
+                          >
+                            Restore
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            title="Delete backup"
+                            onClick={() => handleDelete(b)}
+                          >
+                            <Trash2 size={13} className="text-zinc-500 hover:text-red-400" />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Restore confirmation modal */}
+      {confirmEntry && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="bg-zinc-800 border border-zinc-600 rounded-lg shadow-2xl w-full max-w-md mx-4">
+            <div className="px-5 py-4 border-b border-zinc-700">
+              <h3 className="text-base font-semibold text-zinc-100">Confirm Restore</h3>
+            </div>
+            <div className="px-5 py-4 space-y-3">
+              <p className="text-sm text-zinc-300">
+                This will replace all current data with the selected backup. The backend must be stopped first. Continue?
+              </p>
+              <p className="text-xs font-mono text-zinc-500">{confirmEntry.filename}</p>
+            </div>
+            <div className="px-5 py-4 border-t border-zinc-700 flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setConfirmEntry(null)}>Cancel</Button>
+              <Button
+                onClick={handleRestoreConfirmed}
+                className="bg-red-700 hover:bg-red-600 text-white border-0"
+              >
+                Restore
               </Button>
             </div>
           </div>
@@ -970,6 +1364,7 @@ function AboutPanel() {
 const TABS: { id: SettingsTab; label: string }[] = [
   { id: "document-types", label: "Document Types" },
   { id: "folders",        label: "Folders" },
+  { id: "backup",         label: "Backup" },
   { id: "llm",            label: "LLM Configuration" },
   { id: "about",          label: "About" },
 ];
@@ -1005,6 +1400,7 @@ export function SettingsPage() {
       <div>
         {tab === "document-types" && <DocumentTypesPanel />}
         {tab === "folders"        && <FoldersPanel />}
+        {tab === "backup"         && <BackupPanel />}
         {tab === "llm"            && <LlmConfigPanel />}
         {tab === "about"          && <AboutPanel />}
       </div>

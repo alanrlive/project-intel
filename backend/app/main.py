@@ -1,7 +1,7 @@
 import logging
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -49,7 +49,8 @@ app.add_middleware(
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 from app.routers import data, documents, llm, notifications, query  # noqa: E402
-from app.routers import settings as settings_router  # noqa: E402
+from app.routers import settings as settings_router                 # noqa: E402
+from app.routers import backup as backup_router                     # noqa: E402
 
 app.include_router(llm.router)
 app.include_router(documents.router)
@@ -57,6 +58,7 @@ app.include_router(notifications.router)
 app.include_router(query.router)
 app.include_router(data.router)
 app.include_router(settings_router.router)
+app.include_router(backup_router.router, prefix="/backup", tags=["backup"])
 
 
 # ── Health & status endpoints ─────────────────────────────────────────────────
@@ -66,7 +68,7 @@ async def health_check():
     return {
         "status": "ok",
         "project": settings.project_name,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
 

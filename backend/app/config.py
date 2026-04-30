@@ -143,6 +143,32 @@ def get_model_assignments() -> dict:
     return result
 
 
+_DEFAULT_BACKUP_CONFIG: dict = {
+    "enabled": False,
+    "destinations": [
+        {"label": "Destination 1", "path": ""},
+        {"label": "Destination 2", "path": ""},
+    ],
+    "schedule": {
+        "enabled": False,
+        "hour": 2,
+        "minute": 0,
+    },
+}
+
+
+def read_backup_config() -> dict:
+    """Return the backup section of settings.json, or defaults if absent."""
+    return read_app_config().get("backup", _DEFAULT_BACKUP_CONFIG)
+
+
+def write_backup_config(config: dict) -> None:
+    """Persist the backup section to settings.json without touching other keys."""
+    cfg = read_app_config()
+    cfg["backup"] = config
+    write_app_config(cfg)
+
+
 def get_llm_logging() -> bool:
     """Return whether LLM response logging is enabled."""
     return bool(read_app_config().get("llm_logging_enabled", False))

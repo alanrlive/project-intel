@@ -82,3 +82,7 @@ Pop-Location
 
 Write-Host "`n[OK] Reset complete! Database will be recreated on next start." -ForegroundColor Green
 Write-Host "   Run: .\scripts\start_backend.ps1" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "[WARNING] Do NOT start the backend before restoring a backup." -ForegroundColor Red
+Write-Host "          Starting the backend now will create a blank database." -ForegroundColor Yellow
+Write-Host "          To restore: .\scripts\restore_backup.ps1 -File <filename>" -ForegroundColor Cyan

@@ -187,6 +187,47 @@ export interface RebuildResult {
   total: number;
 }
 
+export interface BackupDestination {
+  label: string;
+  path: string;
+}
+
+export interface BackupScheduleConfig {
+  enabled: boolean;
+  hour: number;
+  minute: number;
+}
+
+export interface BackupConfig {
+  enabled: boolean;
+  destinations: BackupDestination[];
+  schedule: BackupScheduleConfig;
+}
+
+export interface BackupEntry {
+  filename: string;
+  path: string;
+  size_bytes: number;
+  size_mb: number;
+  timestamp: string;
+  destination: string;
+}
+
+export interface BackupCreateResult {
+  filename: string;
+  size_bytes: number;
+  size_mb: number;
+  destinations_written: string[];
+  destinations_skipped: string[];
+  timestamp: string;
+}
+
+export interface BackupRestoreResult {
+  restored: boolean;
+  filename: string;
+  message: string;
+}
+
 export interface LlmStatus {
   ollama_running: boolean;
   ollama_url: string;
